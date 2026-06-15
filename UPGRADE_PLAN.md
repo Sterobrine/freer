@@ -9,7 +9,7 @@
 
 Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷却机制**）思路清晰，适合模拟器脚本类场景。但当前实现处于**原型阶段**：多处存在确定性逻辑缺陷、状态管理隐患和工程化缺失，在复杂任务或长时间运行下容易出现**误点击、死循环、状态串扰**等问题。
 
-建议按 **「修 Bug → 稳架构 → 识别路由 → 补工程 → 扩能力」** 五阶段推进，优先修复会影响正确性的逻辑问题，再落地多 Matcher 识别模块，最后考虑产品化扩展。
+建议按 **「修 Bug → 稳架构 → 识别路由 → 补工程（含 freer_api）→ GUI 产品化（路线 B）」** 五阶段推进，优先修复会影响正确性的逻辑问题，再落地多 Matcher 识别模块，Phase 2 建立 Python API 边界，Phase 3 以 Tauri + React 交付新界面（见 **§4.6**）。
 
 ---
 
@@ -52,7 +52,7 @@ Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷�
 | P2-4 | `type(x).__name__ == 'dict'` | 脆弱的类型判断，应使用 `isinstance` |
 | P2-5 | `DataManager.AddObj` | `obj.__dict__` 序列化，易混入运行时字段（`hwnd`、`has_rotate_time` 等） |
 | P2-6 | `FileTool.WriteJSON` | 无缩进、`ensure_ascii=True` 默认，中文可读性差 |
-| P2-7 | GUI | `AddEvent.py` / `EditEvent.py` 大量重复代码；无动作管理界面 |
+| P2-7 | GUI | `AddEvent.py` / `EditEvent.py` 大量重复代码；无动作管理界面；Phase 3 将用 **§4.6 路线 B** 统一为 Tauri/React SPA |
 | P2-8 | 动作类型 | 注释提到 `action_type=2` 右键，**未实现** |
 | P2-9 | 日志 | 仅 `print`，无级别、无文件、无法回溯 |
 
@@ -139,8 +139,8 @@ flowchart TD
 
 | 能力 | 说明 |
 |------|------|
-| 动作管理 GUI | 增删改 `action.json`，与事件 GUI 对称 |
-| 任务运行 GUI | 选择根事件、重复次数、开始/停止/暂停 |
+| 动作管理 GUI | 增删改 `action.json`；Phase 3 在 Tauri/React 中实现（§4.6） |
+| 任务运行 GUI | 选择根事件、重复次数、开始/停止/暂停；WebSocket 日志（§4.6.4） |
 | 右键点击 / 长按 | 补全 `action_type=2` 等 |
 | 多 Matcher 识别 | 见 **§4.5**，按场景路由 template / feature / ocr / ui / color |
 | 录制回放 | 截屏选点 → 自动生成微事件 |
@@ -454,6 +454,198 @@ def resolve_for_action(self, spec, event):
 | Phase 2 | L3：`max_consecutive_miss_frames`、调试截图、暂停任务 |
 | Phase 3 | GUI 配置 `last_resort`、fallback 链可视化 |
 
+### 4.6 GUI 升级方案（路线 B：Python 引擎 + Tauri/React 界面）
+
+> **选定策略**：GUI 产品化采用 **路线 B**——保留现有 Python 引擎（`Control.py` / `Tools.py` / `recognition/`），界面层用 **Tauri 2 + React** 重写；Rust 仅承担 Tauri 要求的原生壳与 IPC 胶水，**不重写调度与识别逻辑**。  
+> 视觉参考 [CC Switch](https://github.com/farion1231/cc-switch)（Tauri 2 + React + shadcn/ui）；Freer 与之差异在于业务后端仍为 Python sidecar，而非 Rust 全栈（路线 C）。
+
+#### 4.6.1 方案对比（为何选 B）
+
+| 路线 | 界面 | 引擎 | Rust 工作量 | 适用 |
+|------|------|------|-------------|------|
+| **A** PySide6 渐进美化 | Qt Widgets | Python | 无 | 改动最小，视觉上限低于现代 Web UI |
+| **B** Python + Tauri/React | React + shadcn/ui | **Python 保留** | 薄（IPC、进程、文件） | **Freer 当前选定**；引擎不动，换脸 + 产品化 |
+| **C** Tauri 全栈 | React + shadcn/ui | **Rust 重写** | 厚（调度、识别、Win32） | 长期产品、小包体；工作量数倍于 B |
+
+**路线 B 为何涉及 Rust**：并非引擎需要 Rust，而是 **Tauri 框架本身**要求一层 Rust 运行时（窗口、WebView、sidecar、系统 API）。B 中 Rust 不写业务，只写「启动 Python、转发命令、读文件、系统托盘」等胶水代码。若完全不想碰 Rust，可改用 Electron 或 pywebview，但会失去 Tauri 的小体积与原生集成优势。
+
+#### 4.6.2 目标架构
+
+```mermaid
+flowchart TB
+    subgraph ui [Tauri 壳 + React 前端]
+        REACT[React 18 + TypeScript + Vite]
+        SHADCN[shadcn/ui + Tailwind CSS]
+        PAGES[事件编辑 / 动作管理 / 任务控制台 / ROI 预览]
+    end
+    subgraph glue [Rust 胶水层 — src-tauri]
+        CMD[Tauri Commands]
+        SIDE[Sidecar 生命周期管理]
+        FS[文件对话框 / 托盘 / 日志转发]
+    end
+    subgraph engine [Python 引擎 — 现有代码保留]
+        API[freer_api 服务层]
+        CTL[Control.py / EventEx]
+        REC[recognition/ + Tools.py]
+    end
+    REACT -->|invoke| CMD
+    CMD --> SIDE
+    SIDE -->|HTTP / WebSocket / stdin JSON-RPC| API
+    API --> CTL
+    CTL --> REC
+    FS --> CMD
+```
+
+**职责划分**：
+
+| 层 | 技术 | 职责 |
+|----|------|------|
+| **前端** | React 18、TypeScript、Vite、Tailwind CSS 3.4、shadcn/ui、TanStack Query、react-hook-form、zod | 表单、事件树、模板预览、ROI 选框、任务控制台、日志流 |
+| **胶水** | Tauri 2、Rust（serde、tokio、tauri-plugin-shell/log/dialog） | 窗口与 WebView、启动/监控 Python sidecar、IPC 转发、本地文件与托盘 |
+| **引擎** | Python 3、`Control.py`、`Models.py`、`Tools.py`、`recognition/` | 事件 CRUD、调度运行、OpenCV/ADB/Win32、识别路由 |
+
+#### 4.6.3 前端技术栈（对齐 CC Switch 视觉）
+
+| 类别 | 选型 | 用途 |
+|------|------|------|
+| 框架 | React 18 + TypeScript | 组件化界面 |
+| 构建 | Vite | 开发与打包 |
+| 样式 | Tailwind CSS 3.4 | spacing / color / 暗色模式 |
+| 组件 | shadcn/ui（Radix UI） | Button、Dialog、Form、Tabs、Tree 等 |
+| 数据 | TanStack Query v5 | 事件/动作列表缓存与刷新 |
+| 表单 | react-hook-form + zod | 校验与类型安全 |
+| 拖拽 | @dnd-kit | 子事件 / 异常列表排序 |
+| 图标 | lucide-react | 与 shadcn 配套 |
+
+#### 4.6.4 Python ↔ 前端 IPC 设计
+
+引擎对外暴露 **稳定 API 边界**，GUI 不直接 import `Control.py`，统一经 `freer_api/` 服务层调用。
+
+**推荐传输**：开发期 **本地 HTTP（FastAPI / uvicorn）** 或 **WebSocket**（任务日志流）；Tauri sidecar 启动 Python 进程并监听固定端口（如 `127.0.0.1:17890`）。备选：stdin/stdout JSON-RPC（调试简单，但不利于日志流）。
+
+**API 分组（初版）**：
+
+| 模块 | 方法示例 | 说明 |
+|------|----------|------|
+| **配置** | `GET/PUT /config` | 读写在 `config.yaml` |
+| **事件** | `GET/POST/PUT/DELETE /events` | CRUD `event.json`；含校验 |
+| **动作** | `GET/POST/PUT/DELETE /actions` | CRUD `action.json` |
+| **模板** | `GET /templates`、`POST /capture` | 列出 `img/`、ADB 截屏 |
+| **任务** | `POST /task/start`、`POST /task/stop`、`GET /task/status` | 包装 `EventEx` |
+| **日志** | `WS /logs` 或 SSE | 结构化日志推送到任务控制台 |
+| **识别调试** | `POST /recognize/preview` | 单帧截屏 + Matcher 结果（ROI 编辑器用） |
+
+**响应约定**：JSON 统一 `{ "ok": true, "data": ... }` / `{ "ok": false, "error": { "code", "message" } }`；引擎异常映射为 HTTP 4xx/5xx，不向前端抛 Python traceback。
+
+**Sidecar 生命周期**：
+
+1. Tauri 启动 → Rust 拉起 Python sidecar（`python -m freer_api` 或 PyInstaller 单文件）
+2. 健康检查 `GET /health` 通过后前端才渲染主界面
+3. 应用退出 → Rust 发送 `POST /shutdown` 并等待进程结束
+4. Sidecar 崩溃 → 前端告警 + Rust 可选自动重启（限次数）
+
+#### 4.6.5 建议目录结构
+
+```
+freer/
+├── engine/                     # 现有 Python 引擎（由根目录逐步迁入）
+│   ├── Control.py
+│   ├── Models.py
+│   ├── Tools.py
+│   ├── recognition/
+│   └── freer_api/              # 新增：HTTP/WS 服务层
+│       ├── __main__.py         # sidecar 入口
+│       ├── app.py              # FastAPI 应用
+│       ├── routes/             # events / actions / task / logs
+│       └── schemas.py          # Pydantic 模型（与前端 zod 对齐）
+├── gui/                        # Tauri + React 前端（新建）
+│   ├── src/
+│   │   ├── components/
+│   │   │   └── ui/             # shadcn/ui
+│   │   ├── pages/              # EventEditor / TaskConsole / TemplateLab
+│   │   ├── lib/                # api client、Tauri invoke 封装
+│   │   └── hooks/
+│   ├── package.json
+│   └── vite.config.ts
+├── src-tauri/                  # Tauri Rust 胶水
+│   ├── src/
+│   │   ├── main.rs
+│   │   ├── commands.rs         # 薄封装：调 sidecar HTTP 或读本地文件
+│   │   └── sidecar.rs          # 启动/监控 Python 进程
+│   └── tauri.conf.json
+├── data/                       # 配置数据（路径由 config 统一）
+├── img/
+└── View/                       # 旧 PySide2 GUI；Phase 3 完成后标记 deprecated
+```
+
+#### 4.6.6 主界面信息架构（单窗口）
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 菜单：文件 | 事件 | 动作 | 运行 | 设置                       │
+├──────────────┬──────────────────────────────────────────────┤
+│ 事件树       │ 主内容区（Tabs / 路由）                        │
+│ QTree 等价   │  ├─ 事件属性（微/宏动态表单 + match_type）     │
+│              │  ├─ 动作编辑器                                │
+│              │  ├─ 模板库 + ROI 预览（Canvas 选框）           │
+│              │  └─ 任务控制台 + 实时日志（WebSocket）         │
+├──────────────┴──────────────────────────────────────────────┤
+│ 状态栏：Sidecar 状态 | ADB | 当前事件 | 识别耗时              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+与 §4.4 功能扩展及 Phase 3 任务一一对应；旧 `AddEvent.py` / `EditEvent.py` 合并为单一 SPA。
+
+#### 4.6.7 与分阶段路线图的衔接
+
+| 阶段 | GUI 相关交付 | 说明 |
+|------|--------------|------|
+| **Phase 2** | `freer_api/` 骨架 + 事件/动作 REST；旧 PySide 抽 `event_form_common`（可选，短期并存） | **先定 API 边界**，GUI 与引擎解耦 |
+| **Phase 3** | 新建 `gui/` + `src-tauri/`；实现事件/动作 CRUD、任务控制台、模板 ROI、识别配置表单 | **路线 B 主交付**；弃用 PySide 为主入口 |
+| **Phase 4+** | 录制向导、导入导出、可选 Web 远程控制台 | 仍走同一 `freer_api`，前端加页面即可 |
+
+**Phase 2 新增任务（相对 §五 Phase 2 原表）**：
+
+| 任务 | 说明 |
+|------|------|
+| `freer_api` 服务层 | FastAPI + Pydantic；事件/动作/配置 CRUD；与 `DataManager` 对接 |
+| API 契约文档 | OpenAPI → 前端生成类型；与 zod schema 同步 |
+| Sidecar 原型 | `python -m freer_api` 可独立启动；`GET /health` |
+
+**Phase 3 修订任务（路线 B 取代原 PySide 扩展）**：
+
+| 任务 | 说明 |
+|------|------|
+| Tauri 项目初始化 | `gui/` + `src-tauri/`；dev 联调 sidecar |
+| 事件/动作管理页 | React + shadcn；对接 REST |
+| 任务控制台 | Start/Stop、repeat、WebSocket 日志 |
+| 模板与 ROI | 截屏预览 + Canvas 选框 → 写回 `roi_*` |
+| 识别配置表单 | `match_type`、fallback、`last_resort`（§4.5、§4.5.10） |
+| 事件校验器 | 保存前 zod + 后端二次校验 |
+| 打包 | Tauri bundle + Python sidecar（PyInstaller 或内嵌 venv）；文档化安装依赖 |
+
+#### 4.6.8 打包与部署
+
+| 项 | 建议 |
+|----|------|
+| **Python 分发** | PyInstaller 打 `freer-engine.exe` 作 sidecar；或安装包内带最小 venv |
+| **体积预期** | 大于纯 Tauri（~15MB），因含 Python + OpenCV；目标可控在 **80–150MB** |
+| **开发环境** | Node 18+、pnpm、Rust 1.85+、Tauri CLI 2.8+、Python 3.10+ |
+| **旧 GUI** | Phase 3 完成前保留 `View/AddEvent.py` 作 fallback；README 注明迁移状态 |
+
+#### 4.6.9 风险与缓解（路线 B 专项）
+
+| 风险 | 缓解 |
+|------|------|
+| IPC 协议频繁变动 | Phase 2 冻结 OpenAPI v1；破坏性变更升版本 |
+| Sidecar 启动失败 | 健康检查 + 明确错误 UI；日志写 `%APPDATA%/freer/logs` |
+| 双进程调试复杂 | 开发脚本一键 `pnpm tauri dev` + 自动起 API；集成测试 mock HTTP |
+| Python 打包跨机器差异 | CI 打 Windows 安装包；文档列 OpenCV/ADB 前置条件 |
+| Rust 胶水维护成本 | 严格限制 `src-tauri` 职责，业务逻辑禁止写入 Rust |
+| 与路线 C 混淆 | 文档明确：B 的 Rust 仅胶水；引擎迁移 Rust 属 Phase 4+ 可选演进 |
+
+**可选演进 B → C**：API 稳定后，可将 `freer_api` 背后实现逐模块换为 Rust，最终去掉 Python sidecar；非 Phase 3 范围。
+
 ---
 
 ## 五、分阶段升级路线图
@@ -547,28 +739,40 @@ def resolve_for_action(self, spec, event):
 | 依赖与文档 | `requirements.txt`；README 增加故障排查章节 |
 | 日志模块 | 替换 print；文件轮转；关键事件（入栈/出栈/异常/空转）结构化记录 |
 | 序列化清理 | 保存 JSON 时白名单字段；剥离 `hwnd`、`has_run_time` 等运行时状态 |
-| 代码整理 | 抽取 `View/event_form_common.py` 消除 Add/Edit 重复 |
-| 测试 | pytest：调度逻辑 + `recognition/` Matcher 与 Router 单测 |
+| 代码整理 | 抽取 `View/event_form_common.py` 消除 Add/Edit 重复（旧 GUI 过渡用） |
+| **`freer_api` 服务层** | FastAPI sidecar：事件/动作/配置 CRUD；OpenAPI 契约（见 **§4.6.4**） |
+| 测试 | pytest：调度逻辑 + `recognition/` Matcher 与 Router 单测 + `freer_api` 接口测 |
 
 **验收标准**：
 
-- [ ] 从任意 cwd 启动 `main.py` 与 `View/AddEvent.py` 读写同一 data 目录
+- [ ] 从任意 cwd 启动 `main.py` 与 `python -m freer_api` 读写同一 data 目录
 - [ ] 核心逻辑测试覆盖率 > 60%（调度与动作模块）
+- [ ] `GET /events`、`POST /task/start` 等 API 可用 curl/前端独立调用
 
 ---
 
-### Phase 3 — 产品化能力（3–4 周）
+### Phase 3 — 产品化 GUI（路线 B：Tauri + React）（4–6 周）
 
-**目标**：完善工具链，支持非开发者使用。
+**目标**：以 **§4.6 路线 B** 交付现代 GUI，Python 引擎经 `freer_api` 提供服务；旧 PySide2 界面降级为 fallback。
 
 | 任务 | 说明 |
 |------|------|
-| 动作管理 GUI | CRUD `action.json` |
-| 任务控制台 | 选根事件、设置 repeat、Start/Stop；展示当前路由与日志 |
-| 事件校验器 | 保存前检查：引用动作是否存在、子事件循环依赖、标志路径有效、match_type 与 ROI 合法 |
-| 模板管理 | 特征图统一放在 `img/`，GUI 内预览与裁剪 ROI |
-| 识别配置 GUI | 事件表单增加 `match_type`、ROI 选框、`fallback` 配置；按类型切换 target 输入方式 |
-| 导入导出 | 事件包（json + img）一键打包/加载 |
+| Tauri + React 脚手架 | 新建 `gui/`、`src-tauri/`；Tailwind + shadcn/ui；dev 联调 sidecar |
+| Sidecar 集成 | Rust 启动/监控 Python；健康检查；日志转发 |
+| 事件 / 动作管理 | 单窗口 SPA；合并原 Add/Edit；对接 REST |
+| 任务控制台 | 选根事件、repeat、Start/Stop/Pause；WebSocket 日志 |
+| 事件校验器 | 前后端双重校验：引用、循环依赖、路径、match_type / ROI |
+| 模板管理 | `img/` 预览；Canvas ROI 选框；写回 `roi_*` |
+| 识别配置 GUI | `match_type`、fallback、`last_resort` 表单（§4.5、§4.5.10） |
+| 导入导出 | 事件包（json + img）打包/加载 |
+| 打包发布 | Tauri bundle + Python sidecar；Windows 安装包与 README |
+
+**验收标准**：
+
+- [ ] 不启动 PySide 即可完成事件 CRUD、任务运行、日志查看
+- [ ] Sidecar 异常退出时界面有明确提示，不 silent fail
+- [ ] ROI 选框结果保存后，引擎识别可正确使用
+- [ ] 安装包在干净 Windows 环境可安装运行（文档列 ADB/OpenCV 前置条件）
 
 ---
 
@@ -634,7 +838,9 @@ if child['has_run_time'] >= child['max_run_time']:
 |------|----------|
 | 修复子事件语义可能改变现有脚本行为 | 提供 `legacy_mode` 配置开关；迁移说明文档 |
 | OpenCV/ADB 环境差异 | CI 仅测纯逻辑；集成测试文档化手动步骤 |
-| GUI 重构工作量大 | Phase 2 仅抽公共模块，Phase 3 再统一界面 |
+| GUI 重构工作量大 | **路线 B**（§4.6）：Phase 2 先 `freer_api`，Phase 3 再 Tauri/React；旧 PySide 作过渡 |
+| Sidecar / IPC 不稳定 | Phase 2 冻结 OpenAPI；集成测试 + 健康检查；见 §4.6.9 |
+| Python sidecar 打包体积大 | PyInstaller 单文件 sidecar；文档化依赖；Phase 4+ 可选 B→C 瘦身 |
 | 识别方案变更导致旧配置行为变化 | 旧字符串 `symbol_start` 默认解析为 template；提供迁移说明与示例 |
 | OCR / uiautomator2 为可选依赖 | `requirements-optional.txt` 分组；缺失时 Router 跳过并日志告警 |
 | fallback 链拖慢主循环 | 严格执行 §4.5.6 性能预算；超时不继续降级 |
@@ -652,11 +858,11 @@ P1 调度稳定性 + 识别骨架（FrameContext / TemplateMatcher / Router / �
     ↓
 P1.5 多 Matcher 路由（feature / ocr / ui / color + fallback + 配置扩展）
     ↓
-P2 工程化（配置 / 日志 / 测试 / 序列化）
+P2 工程化（配置 / 日志 / 测试 / 序列化 / freer_api）
     ↓
-P3 产品化 GUI 与工具链（含识别配置界面）
+P3 产品化 GUI — 路线 B（Tauri + React + Python sidecar，§4.6）
     ↓
-P4 多尺度 / 纯 ADB / 录制 / 可选重型 Matcher
+P4 多尺度 / 纯 ADB / 录制 / 可选重型 Matcher / 可选 B→C 引擎迁移
 ```
 
 ---
@@ -667,10 +873,10 @@ P4 多尺度 / 纯 ADB / 录制 / 可选重型 Matcher
 |------|------|----------|
 | **V0.2** | 稳定版 | Phase 0 + Phase 1 全部完成 |
 | **V0.25** | 识别版 | Phase 1.5 完成，多 Matcher 路由可用 |
-| **V0.3** | 工程版 | Phase 2 完成，具备测试与配置 |
-| **V0.4** | 工具版 | Phase 3 完成，GUI 闭环（含识别配置） |
+| **V0.3** | 工程版 | Phase 2 完成，具备测试、配置与 `freer_api` |
+| **V0.4** | 工具版 | Phase 3 完成，Tauri/React GUI 闭环（路线 B，含识别配置） |
 | **V1.0** | 正式版 | 文档齐全、核心场景验证通过、已知 P0/P1 清零 |
 
 ---
 
-*文档生成依据：仓库 master 分支当前代码静态分析；§4.5 识别方案基于多 Matcher 路由架构设计。实施时建议为每项 Phase 0/1/1.5 修复补充回归用例后再合并。*
+*文档生成依据：仓库 master 分支当前代码静态分析；§4.5 识别方案基于多 Matcher 路由架构设计；§4.6 GUI 采用路线 B（Python 引擎 + Tauri/React）。实施时建议为每项 Phase 0/1/1.5 修复补充回归用例后再合并。*
