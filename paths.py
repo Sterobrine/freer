@@ -13,7 +13,7 @@ CONFIG_PATH = PROJECT_ROOT / 'config.yaml'
 
 
 def refresh_paths() -> None:
-    global DATA_DIR, IMG_DIR, LOG_DIR, EVENT_JSON, ACTION_JSON, COUNT_JSON
+    global DATA_DIR, IMG_DIR, LOG_DIR, EVENT_JSON, ACTION_JSON, COUNT_JSON, SCREENSHOT_PATH
     try:
         from config import get_config
         cfg = get_config()
@@ -27,6 +27,7 @@ def refresh_paths() -> None:
     EVENT_JSON = DATA_DIR / 'event.json'
     ACTION_JSON = DATA_DIR / 'action.json'
     COUNT_JSON = DATA_DIR / 'count.json'
+    SCREENSHOT_PATH = PROJECT_ROOT / 'sc.bmp'
 
 
 refresh_paths()

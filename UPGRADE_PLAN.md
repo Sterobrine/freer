@@ -21,7 +21,7 @@ Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷�
 | Phase 1 | V0.2 | **已完成** | `recognition/`、FrameContext、TemplateMatcher、调度防抖 |
 | Phase 1.5 | V0.25 | **已完成** | feature/ocr/ui/color、fallback、last_resort |
 | Phase 2 | V0.3 | **已完成** | `config.yaml`、`freer_api`、`freer_log`、序列化白名单 |
-| Phase 3 | V0.4 | **进行中** | Tauri + React GUI；OpenAPI v1.1 已落地；详见 **§4.4.8** |
+| Phase 3 | V0.4 | **进行中** | GUI 页面已落地；打包验收待完成（§4.4.8） |
 | Phase 4 | — | 未开始 | 多尺度、录制、可选重型 Matcher |
 
 > Phase 3 原则：**不限工期，优先完成度与质量**；先冻结 OpenAPI v1.1并实现 API，再开发前端。
@@ -669,11 +669,11 @@ Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 
 **验收标准**：
 
-- [ ] 不启动 PySide 即可完成：事件库、**树形编排**、动作 CRUD、识别配置、ROI、任务运行、日志
-- [ ] Sidecar 异常退出时界面有明确提示，可重试，不 silent fail
-- [ ] 软暂停后可 Resume 并从帧边界继续；硬 Stop 不可恢复
-- [ ] ROI 选框保存后引擎识别正确；`recognize/preview` 与引擎一致
-- [ ] 编排保存通过 `POST /events/validate`（环、引用、ROI）
+- [x] 不启动 PySide 即可完成：事件库、**树形编排**、动作 CRUD、识别配置、ROI、任务运行、日志
+- [x] Sidecar 异常退出时界面有明确提示，可重试，不 silent fail
+- [x] 软暂停后可 Resume 并从帧边界继续；硬 Stop 不可恢复
+- [x] ROI 选框保存后引擎识别正确；`recognize/preview` 与引擎一致
+- [x] 编排保存通过 `POST /events/validate`（环、引用、ROI）
 - [ ] 干净 Windows 环境可安装运行（文档列 ADB/OpenCV 前置）
 - [ ] `openapi-typescript` 生成类型与 `/openapi.json` 同步（CI 契约检查）
 

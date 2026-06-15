@@ -153,6 +153,15 @@ class TestFreerApiV11(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['data']['name'], '测试根事件')
 
+    def test_get_event_by_name(self):
+        resp = self._client().get('/events/测试根事件')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['name'], '测试根事件')
+
+    def test_screenshot_not_found(self):
+        resp = self._client().get('/screenshot')
+        self.assertEqual(resp.status_code, 404)
+
     def test_pause_without_task(self):
         resp = self._client().post('/task/pause')
         self.assertEqual(resp.status_code, 409)

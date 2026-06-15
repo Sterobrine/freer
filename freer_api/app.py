@@ -197,9 +197,29 @@ def capture_screen():
     from recognition.frame import FrameContext
     try:
         frame = FrameContext.capture(AdbClient())
-        return ok({'frame_id': frame.frame_id, 'screenshot': str(paths.SCREENSHOT_PATH)})
+        return ok({
+            'frame_id': frame.frame_id,
+            'screenshot': str(paths.SCREENSHOT_PATH),
+            'url': '/screenshot',
+        })
     except Exception as exc:
         return JSONResponse(status_code=503, content=fail('capture_failed', str(exc), 503))
+
+
+@app.get('/screenshot')
+def get_screenshot():
+    path = paths.SCREENSHOT_PATH
+    if not path.is_file():
+        return JSONResponse(status_code=404, content=fail('not_found', '尚无截图', 404))
+    return FileResponse(path, media_type='image/bmp', filename='screenshot.bmp')
+
+
+@app.get('/events/{name}')
+def get_event(name: str):
+    event = EventStore.get_by_name(name)
+    if event is None:
+        return JSONResponse(status_code=404, content=fail('not_found', f'未找到事件: {name}', 404))
+    return ok(event)
 
 
 @app.post('/task/start')
