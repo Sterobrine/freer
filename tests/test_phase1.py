@@ -69,8 +69,8 @@ class TestMatcherRouter(unittest.TestCase):
         spec = SymbolSpec(type='template', target='btn.bmp', accuracy=0.85)
         cached_rects = [Rect(index=0, x1=1, y1=2, x2=3, y2=4, score=0.9)]
         with patch.object(router._matchers['template'], 'match', return_value=cached_rects) as mocked:
-            first = router.resolve(frame, spec)
-            second = router.resolve(frame, spec)
+            first = router.resolve_for_action(frame, spec)
+            second = router.resolve_for_action(frame, spec)
         mocked.assert_called_once()
         self.assertEqual(first, cached_rects)
         self.assertEqual(second, cached_rects)

@@ -145,9 +145,9 @@ class FileTool:
         return res
 
     @staticmethod
-    def WriteJSON(file_path, content, mode='w'):
+    def WriteJSON(file_path, content, mode='w', indent=None):
         file = open(file_path, mode=mode, encoding='utf-8')
-        file.write(json.dumps(content))
+        file.write(json.dumps(content, ensure_ascii=False, indent=indent))
         file.close()
 
 

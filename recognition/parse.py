@@ -1,16 +1,23 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from recognition.types import SymbolSpec
+from recognition.types import MATCH_TYPES, ROI_EXPAND_PX, SymbolSpec
 
 
 def _coerce_symbol_dict(data: dict, accuracy: float) -> SymbolSpec:
+    fallback = data.get('fallback')
+    if isinstance(fallback, str):
+        fallback = [s.strip() for s in fallback.split('|') if s.strip()]
     return SymbolSpec(
         type=data.get('type', 'template'),
         target=str(data.get('target', '')),
         accuracy=float(data.get('accuracy', accuracy)),
         roi=data.get('roi'),
         index=int(data.get('index', 0)),
-        fallback=data.get('fallback'),
+        fallback=fallback,
+        last_resort=str(data.get('last_resort', 'none')),
+        roi_expand_px=int(data.get('roi_expand_px', ROI_EXPAND_PX)),
+        fallback_accuracy_delta=float(data.get('fallback_accuracy_delta', 0.05)),
+        max_fallback_steps=int(data.get('max_fallback_steps', 2)),
     )
 
 
@@ -27,6 +34,7 @@ def parse_symbol(
         flat_roi = getattr(event, f'roi_{kind}', None)
         flat_fallback = getattr(event, f'match_fallback_{kind}', None)
         flat_index = getattr(event, f'index_{kind}', None)
+        flat_last_resort = getattr(event, f'last_resort_{kind}', None)
         if flat_type is not None:
             fb = None
             if flat_fallback:
@@ -38,6 +46,7 @@ def parse_symbol(
                 roi=flat_roi,
                 index=int(flat_index or 0),
                 fallback=fb,
+                last_resort=str(flat_last_resort or 'none'),
             )
 
     if isinstance(value, dict):

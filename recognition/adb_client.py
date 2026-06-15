@@ -9,7 +9,13 @@ class AdbClient:
     """ADB wrapper with configurable device ID and return-code checks."""
 
     def __init__(self, device_id: Optional[str] = None):
-        self.device_id = device_id or os.environ.get('FREER_ADB_DEVICE', 'emulator-5554')
+        if device_id is None:
+            try:
+                from config import get_config
+                device_id = get_config().adb_device
+            except Exception:
+                device_id = os.environ.get('FREER_ADB_DEVICE', 'emulator-5554')
+        self.device_id = device_id
 
     def _base_cmd(self) -> list:
         return ['adb', '-s', self.device_id]

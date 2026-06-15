@@ -7,6 +7,7 @@ import numpy as np
 import paths
 from recognition.frame import FrameContext
 from recognition.matchers.base import BaseMatcher
+from recognition.matchers.roi import crop_roi
 from recognition.types import Rect, SymbolSpec
 
 
@@ -27,16 +28,6 @@ def _load_template_bgr(template_path: str) -> np.ndarray:
     if template is None:
         raise FileNotFoundError(f'无法加载模板图像: {path}')
     return template
-
-
-def _crop_roi(image: np.ndarray, roi: List[int]) -> Tuple[np.ndarray, int, int]:
-    x1, y1, x2, y2 = roi
-    h, w = image.shape[:2]
-    x1 = max(0, min(x1, w - 1))
-    y1 = max(0, min(y1, h - 1))
-    x2 = max(x1 + 1, min(x2, w))
-    y2 = max(y1 + 1, min(y2, h))
-    return image[y1:y2, x1:x2], x1, y1
 
 
 def _iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
@@ -119,7 +110,7 @@ class TemplateMatcher(BaseMatcher):
         image = frame.image
         offset_x, offset_y = 0, 0
         if spec.roi:
-            image, offset_x, offset_y = _crop_roi(frame.image, spec.roi)
+            image, offset_x, offset_y = crop_roi(frame.image, spec.roi)
 
         all_rects: List[Rect] = []
         templates = [t.strip() for t in spec.target.split('|') if t.strip()]

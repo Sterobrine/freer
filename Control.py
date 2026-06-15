@@ -9,6 +9,9 @@ from recognition.frame import FrameContext, ScreenshotError
 from recognition.parse import parse_symbol
 from recognition.router import MatcherRouter
 from recognition.types import FINISH_DEBOUNCE_FRAMES, TaskPausedError
+from freer_log import get_logger
+
+logger = get_logger('freer.engine')
 
 
 class ActionEx:
@@ -129,10 +132,15 @@ class EventEx:
         self._hwnd_cache = {}
         self._finish_streak = 0
         self._finish_debounce_frames = FINISH_DEBOUNCE_FRAMES
+        self._stop_requested = False
         self.InitInfo()
-        print('开始创建事件树')
+        logger.info('开始创建事件树: %s', event_name)
         self.event_tree_template = self.InitEventTree(self.event_name)
-        print('事件树创建完成')
+        logger.info('事件树创建完成: %s', event_name)
+
+    def request_stop(self):
+        self._stop_requested = True
+        self.stack.clear()
 
     def InitInfo(self):
         print('正在加载事件信息···')
@@ -201,7 +209,7 @@ class EventEx:
             return []
         acc = self.cursor.accuracy if accuracy is None else accuracy
         spec = parse_symbol(target, accuracy=acc, kind=kind, event=self.cursor)
-        rects = self.router.resolve(self.frame, spec)
+        rects = self.router.resolve_for_action(self.frame, spec, event=self.cursor)
         return self.router.to_legacy_positions(rects)
 
     @staticmethod
@@ -363,7 +371,7 @@ class EventEx:
             self.cursor.has_rotate_time = 0
             self.CountAndClearRedundant()
             self.RecoverExceptionEvent()
-            self.stack.pop()  # 结束当前宏事件
+            self._pop_event()  # 结束当前宏事件
             return
         print('查找将要执行的子事件···')
         add_event = self.AddNextEvent(self.cursor.event_list)  # 从宏事件的事件队列中寻找并向栈内添加下一个事件
@@ -385,7 +393,7 @@ class EventEx:
 
     def ColdEventCape(self):
         if self.EventIsCold(self.cursor):
-            self.stack.pop()
+            self._pop_event()
             if len(self.stack) == 0:
                 return True
             self.cursor = self.stack[-1]
@@ -405,7 +413,7 @@ class EventEx:
             if self.EventIsFinish():
                 self.CountAndClearRedundant()
                 self.RecoverExceptionEvent()
-                self.stack.pop()
+                self._pop_event()
             else:
                 self.run_time -= 1
             return True
@@ -429,16 +437,23 @@ class EventEx:
             self.cursor.event_list = event_list + self.cursor.event_list
             self.cursor.inactive_list = []
 
+    def _pop_event(self):
+        self.router.last_known.clear()
+        self.stack.pop()
+
     def EventDispatch(self):
         while len(self.stack) > 0:
+            if self._stop_requested:
+                logger.info('任务收到停止请求')
+                return
             try:
                 self.frame = FrameContext.capture(self.adb_client)
             except (TaskPausedError, ScreenshotError) as exc:
-                print('任务暂停: ' + str(exc))
+                logger.warning('任务暂停: %s', exc)
                 self.stack.clear()
                 return
 
-            print('正在执行：' + self.GetEventRoute())
+            logger.debug('正在执行: %s', self.GetEventRoute())
             self.cursor = self.stack[-1]
             if self.ColdEventCape():
                 continue
@@ -446,30 +461,38 @@ class EventEx:
             try:
                 self.GetWindowHwnd()
             except TaskPausedError as exc:
-                print('任务暂停: ' + str(exc))
+                logger.warning('任务暂停: %s', exc)
                 self.stack.clear()
                 return
-            if self.EventIsFinish():  # 事件完成状态检测
-                print('事件"' + self.cursor.name + '"已完成')
-                self.CountAndClearRedundant()  # 完成次数计数，清除父事件的子事件队列中当前执行事件及之前的事件
-                print('事件"' + self.cursor.name + '"结束')
-                self.RecoverExceptionEvent()
-                if self.cursor.event_type == 0:
-                    print(self.cursor.event_list)
-                self.stack.pop()  # 结束当前事件
-                continue
-            if type(self.cursor).__name__ == 'GrandEvent':  # 如果当前事件是宏事件
-                print('开始执行宏事件"' + self.cursor.name + '" 空转(' + str(self.cursor.has_rotate_time) + '/' + str(self.cursor.max_rotate_time) + ')')
-                self.DoGrandEvent()
-            else:  # 如果当前事件是微事件
-                print('开始执行微事件"' + self.cursor.name + '(' + str(self.run_time) + '/' + str(
-                    self.cursor.max_suc_run_time) + ')')
-                self.DoMicroEvent()
+            try:
+                if self.EventIsFinish():
+                    logger.info('事件完成: %s', self.cursor.name)
+                    self.CountAndClearRedundant()
+                    self.RecoverExceptionEvent()
+                    self._pop_event()
+                    continue
+                if type(self.cursor).__name__ == 'GrandEvent':
+                    logger.debug(
+                        '宏事件 %s 空转(%s/%s)',
+                        self.cursor.name, self.cursor.has_rotate_time, self.cursor.max_rotate_time,
+                    )
+                    self.DoGrandEvent()
+                else:
+                    logger.debug(
+                        '微事件 %s (%s/%s)',
+                        self.cursor.name, self.run_time, self.cursor.max_suc_run_time,
+                    )
+                    self.DoMicroEvent()
+            except TaskPausedError as exc:
+                logger.warning('任务暂停: %s', exc)
+                self.stack.clear()
+                return
 
     def Reset(self):
         self.run_time = 0
         self.pre_cursor = None
         self._finish_streak = 0
+        self._stop_requested = False
         self.frame = None
         root = copy.deepcopy(self.event_tree_template)
         self.stack.append(root)
@@ -485,18 +508,29 @@ class EventEx:
 class DataManager:
     @staticmethod
     def ReadFile(obj_type):
+        from serialization import sanitize_action_dict, sanitize_event_dict
         if obj_type == 0:
-            obj_list = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
-        else:
-            obj_list = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
-        return obj_list
+            return Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
+        return Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
 
     @staticmethod
     def WriteFile(obj_type, content):
+        from serialization import sanitize_action_dict, sanitize_event_dict
         if obj_type == 0:
-            Tools.FileTool.WriteJSON(str(paths.EVENT_JSON), content)
+            cleaned = [sanitize_event_dict(item) for item in content]
+            Tools.FileTool.WriteJSON(str(paths.EVENT_JSON), cleaned, indent=2)
         else:
-            Tools.FileTool.WriteJSON(str(paths.ACTION_JSON), content)
+            cleaned = [sanitize_action_dict(item) for item in content]
+            Tools.FileTool.WriteJSON(str(paths.ACTION_JSON), cleaned, indent=2)
+
+    @staticmethod
+    def _serialize_obj(obj, obj_type):
+        from serialization import ACTION_FIELDS, GRAND_EVENT_FIELDS, MICRO_EVENT_FIELDS, sanitize_action_dict, sanitize_event_dict
+        data = dict(obj.__dict__)
+        if obj_type == 0:
+            fields = GRAND_EVENT_FIELDS if data.get('event_type', 1) == 0 else MICRO_EVENT_FIELDS
+            return sanitize_event_dict({k: v for k, v in data.items() if k in fields or k in data})
+        return sanitize_action_dict(data)
 
     @staticmethod
     def AddObj(obj, obj_type):
@@ -505,9 +539,9 @@ class DataManager:
             if obj.name == item['name']:
                 print('提示：事件名已存在')
                 return 0
-        obj_list.append(obj.__dict__)
+        obj_list.append(DataManager._serialize_obj(obj, obj_type))
         DataManager.WriteFile(obj_type, obj_list)
-        print('事件"' + obj.name + '"添加成功')
+        logger.info('事件"%s"添加成功', obj.name)
 
     @staticmethod
     def DelObj(obj, obj_type):

@@ -1,0 +1,5 @@
+# Optional recognition dependencies (Phase 1.5+)
+# Install as needed: pip install -r requirements-optional.txt
+
+paddleocr>=2.7.0
+uiautomator2>=2.16.0

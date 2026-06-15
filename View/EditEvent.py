@@ -5,8 +5,8 @@ from View.EditEventUI import Ui_MainWindow
 import Tools
 import Control
 import Models
-import os
 import paths
+from View import event_form_common as efc
 
 
 class LoadGui(QMainWindow, Ui_MainWindow):
@@ -17,29 +17,11 @@ class LoadGui(QMainWindow, Ui_MainWindow):
 
 
 def LoadData(ui):
-    ui.event_data = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
-    ui.action_data = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
+    efc.LoadData(ui)
 
 
 def GetEventNameList(event_type):
-    ui = gui
-    list = []
-    if event_type == 2:
-        event_list = ui.action_data
-    else:
-        event_list = ui.event_data
-    for event in event_list:
-        if event_type == 2:
-            list.append(event['name'])
-        elif event_type == 3 and event['is_exception'] and event['event_type'] == 0:
-            list.append(event['name'])
-        elif event_type == 4 and event['is_exception'] and event['event_type'] == 1:
-            list.append(event['name'])
-        elif event_type == 0 and event['is_exception'] is not True and event['event_type'] == 0:
-            list.append(event['name'])
-        elif event_type == 1 and event['is_exception'] is not True and event['event_type'] == 1:
-            list.append(event['name'])
-    return list
+    return efc.GetEventNameList(gui, event_type)
 
 
 def ResetChildAndException():
@@ -98,14 +80,7 @@ def InitData(ui):
 
 
 def GetComboboxTypeCode(box):
-    if box.currentText() == '宏事件':
-        return 0
-    elif box.currentText() == '微事件':
-        return 1
-    elif box.currentText() == '异常-宏事件':
-        return 3
-    elif box.currentText() == '异常-微事件':
-        return 4
+    return efc.GetComboboxTypeCode(box)
 
 
 def SwitchEventType(box, mode=-1):
@@ -166,29 +141,16 @@ def ShowEvent():
             AddRow(0, event, 1, 0, 0)
 
 
-def GetImagePath():
-    root_path = os.path.abspath(os.path.join(os.getcwd(), '../')) + '\\img'
-    file_path = QFileDialog.getOpenFileNames(QMainWindow(), "选择文件", root_path, '位图 (*.bmp)')
-    file_path = '|'.join(file_path[0])
-    return file_path
-
-
 def SetStartImagePath():
-    ui = gui
-    file_path = GetImagePath()
-    ui.text_start_path.setText(file_path)
+    efc.SetStartImagePath(gui)
 
 
 def SetFinishImagePath():
-    ui = gui
-    file_path = GetImagePath()
-    ui.text_finish_path.setText(file_path)
+    efc.SetFinishImagePath(gui)
 
 
 def LimitGapInput():
-    ui = gui
-    if ui.text_gap1.value() >= ui.text_gap2.value():
-        ui.text_gap2.setValue(ui.text_gap1.value() + 0.2)
+    efc.LimitGapInput(gui)
 
 
 def ResetBaseInfo():
@@ -214,49 +176,15 @@ def ResetData():
 
 
 def DelRow(row, event_name, event_type):
-    ui = gui
-    if event_type == 0:
-        vbox = ui.child_v_box
-        event_list = ui.child_list
-    else:
-        vbox = ui.exception_v_box
-        event_list = ui.exception_list
-    for i in range(vbox.count()):
-        layout_item = vbox.itemAt(i)
-        if layout_item.layout() == row:
-            deleteItemsOfLayout(layout_item.layout())
-            vbox.removeItem(layout_item)
-            break
-    i = len(event_list) - 1
-    while i >= 0:
-        if type(event_list[i]).__name__ == 'dict' and event_list[i]['event'] == event_name:
-            del event_list[i]
-            break
-        if type(event_list[i]).__name__ == 'str' and event_list[i] == event_name:
-            del event_list[i]
-            break
-        i -= 1
+    efc.DelRow(gui, row, event_name, event_type)
 
 
 def deleteItemsOfLayout(layout):
-    if layout is not None:
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.setParent(None)
-            else:
-                deleteItemsOfLayout(item.layout())
+    efc.deleteItemsOfLayout(layout)
 
 
 def ChangeChildNum(event_name, num1, num2):
-    ui = gui
-    if num1.value() > num2.value():
-        num2.setValue(num1.value())
-    for i in range(len(ui.child_list)):
-        if ui.child_list[i]['event'] == event_name:
-            ui.child_list[i]['should_run_time'] = num1.value()
-            ui.child_list[i]['max_run_time'] = num2.value()
+    efc.ChangeChildNum(gui, event_name, num1, num2)
 
 
 def GenerateRow(event_name, event_type, num1_value, num2_value):

@@ -1,0 +1,12 @@
+# Freer core dependencies (Python 3.10+)
+numpy>=1.24.0
+opencv-python>=4.8.0
+pyyaml>=6.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+pydantic>=2.0.0
+httpx>=0.27.0
+
+# Windows-only engine dependencies
+pywin32>=306; sys_platform == "win32"
+PySide2>=5.15.0; sys_platform == "win32"

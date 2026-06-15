@@ -249,11 +249,11 @@ python main.py
 
 ## 已知限制
 
-1. **平台**：仅支持 Windows；图像输入依赖 ADB，需模拟器与 ADB 设备 ID 匹配（代码中硬编码为 `emulator-5554`）。
-2. **数据文件**：仓库未包含 `data/event.json`，首次使用需自行创建或通过 GUI 生成。
-3. **子事件冲突**：若两个子事件使用相同的起始标志，可能误匹配到先扫描到的那个（见 `main.py` 注释）。
-4. **拖拽逻辑**：`ActionEx.Drag` 中存在索引递增问题，复杂拖拽场景需自行验证。
-5. **右键单击**：`action_type = 2` 在模型注释中提及，但尚未实现。
+1. **平台**：引擎鼠标操作依赖 Windows（`pywin32`）；截屏与输入可走 ADB，跨平台能力仍在演进中。
+2. **ADB 设备**：默认 `emulator-5554`，可在 `config.yaml` 或环境变量 `FREER_ADB_DEVICE` 中修改。
+3. **子事件冲突**：相同 `symbol_start` 时可通过子事件 `priority` 字段区分（高优先级优先）。
+4. **右键单击**：`action_type = 2` 尚未实现。
+5. **GUI**：旧版 PySide2 界面仍可用；Phase 3 将交付 Tauri/React 新界面。
 
 ---
 
@@ -281,6 +281,61 @@ python main.py
   }
 ]
 ```
+
+---
+
+## 配置（V0.3+）
+
+项目根目录的 `config.yaml` 统一管理路径与运行参数：
+
+```yaml
+adb_device: emulator-5554
+data_dir: data
+log_level: INFO
+api:
+  host: 127.0.0.1
+  port: 17890
+recognition:
+  max_consecutive_miss_frames: 30
+```
+
+无论从哪个工作目录启动 `main.py` 或 `python -m freer_api`，都会解析**项目根目录**下的 `config.yaml` 与 `data/`。
+
+## HTTP API（freer_api）
+
+启动 sidecar：
+
+```bash
+python -m freer_api
+```
+
+常用端点：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| GET/PUT | `/config` | 读写配置 |
+| GET/POST/PUT/DELETE | `/events` | 事件 CRUD |
+| GET/POST/PUT/DELETE | `/actions` | 动作 CRUD |
+| POST | `/task/start` | 启动任务 `{"event_name":"...", "repeat_time":1}` |
+| POST | `/task/stop` | 停止任务 |
+| GET | `/task/status` | 任务状态 |
+| WS | `/logs` | 结构化日志流 |
+
+响应格式：`{"ok": true, "data": ...}` / `{"ok": false, "error": {"code", "message"}}`
+
+OpenAPI 文档：启动后访问 `http://127.0.0.1:17890/docs`
+
+## 故障排查
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| 任务立即暂停，日志含 ADB | 设备未连接或 `adb_device` 错误 | `adb devices` 检查；修改 `config.yaml` 的 `adb_device` |
+| 找不到事件/动作 JSON | `data_dir` 配置错误或 cwd 误用 | 确认 `config.yaml` 中 `data_dir` 相对项目根；或直接调用 API 读写 |
+| 窗口未找到任务暂停 | 模拟器标题与 `window_name` 不一致 | 检查事件配置中 `雷电模拟器|TheRender` 等窗口名 |
+| OCR/UI 识别无效果 | 可选依赖未安装 | `pip install -r requirements-optional.txt` |
+| API 无法连接 | sidecar 未启动或端口占用 | `python -m freer_api`；修改 `api.port` |
+| 日志无输出 | 日志级别过高 | 将 `log_level` 设为 `DEBUG`；查看 `logs/freer.log` |
 
 ---
 

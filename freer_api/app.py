@@ -1,0 +1,244 @@
+import asyncio
+import json
+from contextlib import asynccontextmanager
+from typing import Any, Dict
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+
+import paths
+from config import get_config, load_config, save_config, FreerConfig
+from freer_api.models import ConfigUpdateRequest, TaskStartRequest
+from freer_api.schemas import fail, ok
+from freer_api.store import ActionStore, EventStore
+from freer_api.task_runner import TaskRunner
+from freer_log import get_broadcast_handler, get_logger, setup_logging
+
+logger = get_logger('freer.api')
+task_runner = TaskRunner()
+
+
+def _config_payload() -> Dict[str, Any]:
+    cfg = get_config()
+    return {
+        'adb_device': cfg.adb_device,
+        'data_dir': cfg.data_dir,
+        'img_dir': cfg.img_dir,
+        'capture_mode': cfg.capture_mode,
+        'log_level': cfg.log_level,
+        'log_dir': cfg.log_dir,
+        'api': {'host': cfg.api.host, 'port': cfg.api.port},
+        'recognition': {
+            'max_consecutive_miss_frames': cfg.recognition.max_consecutive_miss_frames,
+            'last_known_ttl_frames': cfg.recognition.last_known_ttl_frames,
+        },
+    }
+
+
+def _apply_config_update(body: ConfigUpdateRequest) -> FreerConfig:
+    cfg = get_config()
+    if body.adb_device is not None:
+        cfg.adb_device = body.adb_device
+    if body.data_dir is not None:
+        cfg.data_dir = body.data_dir
+    if body.img_dir is not None:
+        cfg.img_dir = body.img_dir
+    if body.capture_mode is not None:
+        cfg.capture_mode = body.capture_mode
+    if body.log_level is not None:
+        cfg.log_level = body.log_level
+    if body.log_dir is not None:
+        cfg.log_dir = body.log_dir
+    if body.api_host is not None:
+        cfg.api.host = body.api_host
+    if body.api_port is not None:
+        cfg.api.port = body.api_port
+    if body.max_consecutive_miss_frames is not None:
+        cfg.recognition.max_consecutive_miss_frames = body.max_consecutive_miss_frames
+    if body.last_known_ttl_frames is not None:
+        cfg.recognition.last_known_ttl_frames = body.last_known_ttl_frames
+    save_config(cfg)
+    return cfg
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_config(reload=True)
+    paths.refresh_paths()
+    setup_logging()
+    logger.info('freer_api 启动，data_dir=%s', paths.DATA_DIR)
+    yield
+    task_runner.stop()
+    logger.info('freer_api 关闭')
+
+
+app = FastAPI(title='Freer API', version='0.3.0', lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    logger.exception('未处理异常: %s', exc)
+    return JSONResponse(
+        status_code=500,
+        content=fail('internal_error', str(exc), status_code=500),
+    )
+
+
+@app.get('/health')
+def health():
+    return ok({'status': 'ok', 'data_dir': str(paths.DATA_DIR)})
+
+
+@app.get('/config')
+def get_config_route():
+    return ok(_config_payload())
+
+
+@app.put('/config')
+def put_config_route(body: ConfigUpdateRequest):
+    _apply_config_update(body)
+    return ok(_config_payload())
+
+
+@app.get('/events')
+def list_events():
+    return ok(EventStore.list_events())
+
+
+@app.post('/events')
+def create_event(event: Dict[str, Any]):
+    try:
+        created = EventStore.create(event)
+        logger.info('创建事件: %s', created.get('name'))
+        return ok(created)
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
+@app.put('/events/{name}')
+def update_event(name: str, event: Dict[str, Any]):
+    try:
+        updated = EventStore.update(name, event)
+        logger.info('更新事件: %s', name)
+        return ok(updated)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.delete('/events/{name}')
+def delete_event(name: str):
+    try:
+        EventStore.delete(name)
+        logger.info('删除事件: %s', name)
+        return ok({'deleted': name})
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.get('/actions')
+def list_actions():
+    return ok(ActionStore.list_actions())
+
+
+@app.post('/actions')
+def create_action(action: Dict[str, Any]):
+    try:
+        created = ActionStore.create(action)
+        logger.info('创建动作: %s', created.get('name'))
+        return ok(created)
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
+@app.put('/actions/{name}')
+def update_action(name: str, action: Dict[str, Any]):
+    try:
+        updated = ActionStore.update(name, action)
+        logger.info('更新动作: %s', name)
+        return ok(updated)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.delete('/actions/{name}')
+def delete_action(name: str):
+    try:
+        ActionStore.delete(name)
+        logger.info('删除动作: %s', name)
+        return ok({'deleted': name})
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.get('/templates')
+def list_templates():
+    img_dir = paths.IMG_DIR
+    if not img_dir.exists():
+        return ok([])
+    files = sorted(str(p.relative_to(paths.PROJECT_ROOT)) for p in img_dir.rglob('*.bmp'))
+    return ok(files)
+
+
+@app.post('/capture')
+def capture_screen():
+    from recognition.adb_client import AdbClient
+    from recognition.frame import FrameContext
+    try:
+        frame = FrameContext.capture(AdbClient())
+        return ok({'frame_id': frame.frame_id, 'screenshot': str(paths.SCREENSHOT_PATH)})
+    except Exception as exc:
+        return JSONResponse(status_code=503, content=fail('capture_failed', str(exc), 503))
+
+
+@app.post('/task/start')
+def start_task(body: TaskStartRequest):
+    try:
+        if EventStore.get_by_name(body.event_name) is None:
+            return JSONResponse(
+                status_code=404,
+                content=fail('not_found', f'未找到事件: {body.event_name}', 404),
+            )
+        data = task_runner.start(body.event_name, body.repeat_time)
+        return ok(data)
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
+@app.post('/task/stop')
+def stop_task():
+    return ok(task_runner.stop())
+
+
+@app.get('/task/status')
+def task_status():
+    return ok(task_runner.snapshot())
+
+
+@app.post('/shutdown')
+def shutdown():
+    task_runner.stop()
+    return ok({'shutting_down': True})
+
+
+@app.websocket('/logs')
+async def websocket_logs(websocket: WebSocket):
+    await websocket.accept()
+    handler = get_broadcast_handler()
+    if handler is None:
+        await websocket.close()
+        return
+    queue: asyncio.Queue = asyncio.Queue()
+    handler.subscribers.append(queue)
+    try:
+        while True:
+            item = await queue.get()
+            await websocket.send_text(json.dumps(item, ensure_ascii=False))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if queue in handler.subscribers:
+            handler.subscribers.remove(queue)
+
+
+def create_app() -> FastAPI:
+    return app
