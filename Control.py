@@ -2,6 +2,7 @@ import Tools
 import Models
 import time
 import copy
+import threading
 
 import paths
 from recognition.adb_client import AdbClient
@@ -133,6 +134,9 @@ class EventEx:
         self._finish_streak = 0
         self._finish_debounce_frames = FINISH_DEBOUNCE_FRAMES
         self._stop_requested = False
+        self._pause_requested = False
+        self._paused = False
+        self._pause_lock = threading.Condition()
         self.InitInfo()
         logger.info('开始创建事件树: %s', event_name)
         self.event_tree_template = self.InitEventTree(self.event_name)
@@ -140,7 +144,37 @@ class EventEx:
 
     def request_stop(self):
         self._stop_requested = True
+        with self._pause_lock:
+            self._paused = False
+            self._pause_requested = False
+            self._pause_lock.notify_all()
         self.stack.clear()
+
+    def request_pause(self):
+        self._pause_requested = True
+
+    def request_resume(self):
+        with self._pause_lock:
+            self._paused = False
+            self._pause_requested = False
+            self._pause_lock.notify_all()
+
+    @property
+    def pause_pending(self) -> bool:
+        return self._pause_requested and not self._paused
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def _wait_if_paused(self):
+        with self._pause_lock:
+            if self._pause_requested and not self._paused:
+                self._paused = True
+                self._pause_requested = False
+                logger.info('任务在帧边界暂停')
+            while self._paused and not self._stop_requested:
+                self._pause_lock.wait(timeout=0.5)
 
     def InitInfo(self):
         print('正在加载事件信息···')
@@ -446,6 +480,10 @@ class EventEx:
             if self._stop_requested:
                 logger.info('任务收到停止请求')
                 return
+            self._wait_if_paused()
+            if self._stop_requested:
+                logger.info('任务收到停止请求')
+                return
             try:
                 self.frame = FrameContext.capture(self.adb_client)
             except (TaskPausedError, ScreenshotError) as exc:
@@ -493,6 +531,8 @@ class EventEx:
         self.pre_cursor = None
         self._finish_streak = 0
         self._stop_requested = False
+        self._pause_requested = False
+        self._paused = False
         self.frame = None
         root = copy.deepcopy(self.event_tree_template)
         self.stack.append(root)

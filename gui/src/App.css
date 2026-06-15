@@ -1,0 +1,126 @@
+.gate {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.gate-error h1 {
+  margin: 0;
+}
+
+.gate-error button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 16px;
+  border: 1px solid #3b4252;
+  border-radius: 8px;
+  background: #1a1f2b;
+  color: inherit;
+}
+
+.hint {
+  color: #9aa3b2;
+  font-size: 0.9rem;
+}
+
+.hint code {
+  background: #1a1f2b;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #232936;
+  background: #12151c;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  display: inline;
+  margin-right: 8px;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #1f3d2e;
+  color: #7ddea2;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+}
+
+.nav button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9aa3b2;
+}
+
+.nav button.active {
+  background: #1a2233;
+  color: #e8eaed;
+  border-color: #2a3550;
+}
+
+.nav button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.content {
+  padding: 24px;
+  flex: 1;
+}
+
+.card {
+  max-width: 720px;
+  padding: 20px 24px;
+  border-radius: 12px;
+  border: 1px solid #232936;
+  background: #12151c;
+}
+
+.card h2 {
+  margin-top: 0;
+}
+
+.card ul {
+  padding-left: 1.2rem;
+}
+
+.muted {
+  color: #9aa3b2;
+  font-size: 0.95rem;
+}

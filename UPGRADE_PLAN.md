@@ -1,96 +1,70 @@
 # Freer 升级计划
 
-> 基于 V0.1 代码审阅的逻辑问题分析与分阶段改进路线图。  
-> 审阅范围：`Control.py`、`Models.py`、`Tools.py`、`View/*`、`main.py`
+> 分阶段路线图与架构设计文档。  
+> 当前基线：`cursor/upgrade-plan` 分支（V0.3，Phase 0–2 已落地）。
 
 ---
 
 ## 一、总体评估
 
-Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷却机制**）思路清晰，适合模拟器脚本类场景。但当前实现处于**原型阶段**：多处存在确定性逻辑缺陷、状态管理隐患和工程化缺失，在复杂任务或长时间运行下容易出现**误点击、死循环、状态串扰**等问题。
+Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷却机制**）思路清晰，适合模拟器脚本类场景。
 
-建议按 **「修 Bug → 稳架构 → 识别路由 → 补工程（含 freer_api）→ GUI 产品化（路线 B）」** 五阶段推进，优先修复会影响正确性的逻辑问题，再落地多 Matcher 识别模块，Phase 2 建立 Python API 边界，Phase 3 以 Tauri + React 交付新界面（见 **§4.6**）。
+**当前状态（V0.3）**：Phase 0–2 已完成——核心 P0 逻辑缺陷已修复，`recognition/` 多 Matcher 路由与 `freer_api` sidecar 已可用。剩余工作集中在 **Phase 3 产品化 GUI**（Tauri + React，§4.4.8）及少量 P1/P2 遗留项（§二）。
 
----
+**推进顺序**：修 Bug → 稳架构 → 识别路由 → 工程化（`freer_api`）→ **GUI 产品化（路线 B）** → Phase 4 增强能力。
 
-## 二、逻辑问题清单
+### 实施进度（`cursor/upgrade-plan` 分支）
 
-### 2.1 严重（P0）— 会直接导致错误行为
+| 阶段 | 版本目标 | 状态 | 关键交付 |
+|------|----------|------|----------|
+| Phase 0 | V0.2 | **已完成** | Drag/实例化/子事件语义/路径/截图防护 |
+| Phase 1 | V0.2 | **已完成** | `recognition/`、FrameContext、TemplateMatcher、调度防抖 |
+| Phase 1.5 | V0.25 | **已完成** | feature/ocr/ui/color、fallback、last_resort |
+| Phase 2 | V0.3 | **已完成** | `config.yaml`、`freer_api`、`freer_log`、序列化白名单 |
+| Phase 3 | V0.4 | **进行中** | Tauri + React GUI；OpenAPI v1.1 已落地；详见 **§4.4.8** |
+| Phase 4 | — | 未开始 | 多尺度、录制、可选重型 Matcher |
 
-| # | 位置 | 问题 | 影响 |
-|---|------|------|------|
-| P0-1 | `ActionEx.Drag` L31–58 | `i += 2` 写在 `for j in range(action.run_time)` **内部** | `run_time > 1` 时索引跳跃错误，可能 **IndexError** 或跳过拖拽点对；同一对坐标被重复拖拽 |
-| P0-2 | `EventEx` L98–109 | `stack`、`event_tree_template`、`run_time` 等定义为 **类变量** | 多任务/多实例时 **共享同一栈与状态**，后启动的任务污染先启动的任务 |
-| P0-3 | `Models.GrandEvent` / `MicroEvent` / `Action` | `event_list`、`has_rotate_time`、`action`、`hwnd` 等作为 **类属性** | 实例间可能共享可变状态；`SetByDict` 行为不一致 |
-| P0-4 | `CountAndClearRedundant` + `EventIsFinish` | 子事件 `has_run_time >= max_run_time` 时从 `event_list` **移除**，但父宏事件完成条件仍要求剩余子事件 `has_run_time >= should_run_time` | 当 `max_run_time < should_run_time` 或子事件提前被移除时，父事件可能 **在未满足最少执行次数的情况下完成** |
-| P0-5 | `AddNextEvent` L241–247 | 多个子事件 **共用相同 `symbol_start`** 时，按列表顺序取第一个匹配 | 无法区分应执行哪个分支（`main.py` 已注释此问题） |
-| P0-6 | `ImageTool.FindImage` L80 | `cv2.imread('sc.bmp')` 失败时返回 `None`，未校验 | **AttributeError** 导致任务崩溃 |
-| P0-7 | `ActionEx.Drag` L42–50 | 起点终点相同或 `abs(y1-y2)==0` / `abs(x1-x2)==0` 时除零 | 拖拽动作异常中断 |
-
-### 2.2 中等（P1）— 边界场景或长期运行风险
-
-| # | 位置 | 问题 | 影响 |
-|---|------|------|------|
-| P1-1 | `DoMicroEvent` L305 | 执行时使用 `tmp_position`（入栈时缓存），非实时重识别 | 界面动画/滚动后点击 **偏移或点到错误区域** |
-| P1-2 | `EventIsFinish` 微事件无 `symbol_finish` | 以「起始标志消失」作为完成条件 | 识别抖动时可能在「未完成 / 已完成」间 **反复横跳** |
-| P1-3 | `AddNextEvent` L244–245 | 同一帧内对同一目标 **调用两次** `GetPosition` | 性能浪费；极端情况下两次结果不一致 |
-| P1-4 | `ActionEx.LeftClick` L14 | `position[i][0] = 0` **原地修改**序号字段 | 若 position 被复用，后续逻辑坐标序号错乱 |
-| P1-5 | `ColdEventCape` L361 | 冷却回退时 `run_time -= 1` | 无下界保护，可能出现 **负数计数**，冷却逻辑失效 |
-| P1-6 | `RecoverExceptionEvent` L375 | 仅 `is_exception and event_type==0`（异常宏事件）触发恢复 | **异常微事件** 执行后不会恢复 `inactive_list` |
-| P1-7 | `GetWindowHwnd` | 窗口未找到时仅 print，仍继续执行 | 向 **hwnd=0/None** 发消息，行为不可预期 |
-| P1-8 | `Tools.ImageTool.Capture` | `os.system('adb ...')` 无返回值检查 | ADB 断连时静默失败，后续识别全部失效 |
-| P1-9 | `ActionTool.InputCharacter` | `os.system('adb shell input text ' + c)` | 特殊字符注入失败；**shell 注入**风险 |
-| P1-10 | 路径硬编码 | `EventEx` 用 `./data/`，`DataManager` 用 `../data/` | 工作目录不同则 **读写不同文件** 或找不到文件 |
-
-### 2.3 较轻（P2）— 设计/可维护性问题
-
-| # | 位置 | 问题 |
-|---|------|------|
-| P2-1 | `ImageTool.FindImage` | `hwnd` 参数未使用；每模板只取 `minMaxLoc` 单个匹配点 |
-| P2-2 | `ImageTool.FindImage` L80 | 对 BGR 图使用 `COLOR_RGBA2RGB`，颜色空间处理不当 |
-| P2-3 | `GrandEvent.symbol_start` L165 | 拼接子事件标志，调度逻辑中 **未实际使用** |
-| P2-4 | `type(x).__name__ == 'dict'` | 脆弱的类型判断，应使用 `isinstance` |
-| P2-5 | `DataManager.AddObj` | `obj.__dict__` 序列化，易混入运行时字段（`hwnd`、`has_rotate_time` 等） |
-| P2-6 | `FileTool.WriteJSON` | 无缩进、`ensure_ascii=True` 默认，中文可读性差 |
-| P2-7 | GUI | `AddEvent.py` / `EditEvent.py` 大量重复代码；无动作管理界面；Phase 3 将用 **§4.6 路线 B** 统一为 Tauri/React SPA |
-| P2-8 | 动作类型 | 注释提到 `action_type=2` 右键，**未实现** |
-| P2-9 | 日志 | 仅 `print`，无级别、无文件、无法回溯 |
+> Phase 3 原则：**不限工期，优先完成度与质量**；先冻结 OpenAPI v1.1并实现 API，再开发前端。
 
 ---
 
-## 三、架构与流程问题（图示）
+## 二、问题清单
 
-### 3.1 微事件生命周期（当前）
+### 2.1 已解决（Phase 0–2）
 
-```mermaid
-flowchart TD
-    A[宏事件 AddNextEvent] -->|匹配 symbol_start| B[子微事件入栈]
-    B --> C[EventIsFinish?]
-    C -->|起始标志仍在| D[DoMicroEvent 用 tmp_position 点击]
-    D --> C
-    C -->|起始标志消失 或 symbol_finish 出现| E[出栈完成]
-    C -->|连续执行达 max_suc_run_time| F[ColdEventCape 冷却]
-```
+| # | 问题摘要 | 修复阶段 |
+|---|----------|----------|
+| P0-1 | Drag 循环 `i += 2` 位置错误 | Phase 0 |
+| P0-2, P0-3 | `EventEx` / 模型类级可变状态 | Phase 0 |
+| P0-4 | 子事件提前移除导致父宏事件错误完成 | Phase 0 |
+| P0-5 | 同 `symbol_start` 子事件歧义 | Phase 1（`priority`） |
+| P0-6, P0-7 | 截图失败崩溃、Drag 除零 | Phase 0 |
+| P1-1, P1-3 | `tmp_position` 过期、重复 `GetPosition` | Phase 1（帧缓存 + 执行前 resolve） |
+| P1-2 | 完成判定抖动 | Phase 1（连续 N 帧防抖） |
+| P1-7, P1-8 | 窗口句柄、ADB 无错误处理 | Phase 1（缓存 hwnd、`AdbClient`） |
+| P1-10 | `./data/` vs `../data/` 路径分歧 | Phase 0（`paths.py`） |
+| P2-1, P2-2 | 单点匹配、颜色空间 | Phase 1（TemplateMatcher + NMS） |
+| P2-5, P2-9 | 序列化混入运行时字段、仅 `print` 日志 | Phase 2（白名单序列化、`freer_log`） |
+| P2-7 | Add/Edit 重复代码 | Phase 2（`event_form_common.py`；完整 GUI 待 Phase 3） |
 
-**问题**：`tmp_position` 在入栈时写入，执行阶段不刷新；完成判定与执行使用不同帧的识别结果，易产生竞态。
+### 2.2 待处理（Phase 3+）
 
-### 3.2 子事件计数与移除（当前）
+| # | 问题摘要 | 计划 |
+|---|----------|------|
+| P1-4 | `LeftClick` 原地修改 position 序号 | Phase 4 或引擎小修 |
+| P1-5 | `ColdEventCape` `run_time` 无下界 | Phase 4 |
+| P1-6 | 异常微事件不触发 `inactive_list` 恢复 | Phase 4 |
+| P1-9 | `InputCharacter` shell 注入风险 | Phase 4（ADB 安全输入） |
+| P2-3 | `GrandEvent.symbol_start` 拼接未使用 | 低优先级清理 |
+| P2-4 | `type(x).__name__ == 'dict'` | 低优先级清理 |
+| P2-6 | `WriteJSON` 可读性 | Phase 3 GUI 保存时处理 |
+| P2-8 | 右键点击 `action_type=2` 未实现 | Phase 4 |
 
-```mermaid
-flowchart LR
-    subgraph 子事件项
-        S[should_run_time 至少]
-        M[max_run_time 最多]
-        H[has_run_time 已执行]
-    end
-    H -->|">= max_run_time"| R[从 event_list 移除 → inactive_list]
-    H -->|"< should_run_time"| P[父宏事件未完成]
-    R --> P
-```
+---
 
-**问题**：被移除的子事件不再参与父事件完成检查，「至少 N 次」约束可能被绕过。
+## 三、架构与流程
 
-### 3.3 识别流程（目标）
+### 3.1 当前识别与调度流程（Phase 1+）
 
 ```mermaid
 flowchart TD
@@ -106,51 +80,33 @@ flowchart TD
     C -->|否| I
 ```
 
-**相对现状的改进**：单帧单截屏、显式 Matcher 路由、执行前从当前帧取坐标，避免 `tmp_position` 过期与重复识别。
+单帧单截屏、显式 Matcher 路由、执行前从当前帧取坐标；L1 fallback 与 L2 `last_resort` 见 §4.3.9。
 
 ---
 
-## 四、可优化与增强方向
+## 四、架构设计与增强方向
 
-### 4.1 正确性
+### 4.1 工程现状（Phase 0–2 已落地）
 
-- 统一 **单次截屏 → 单次识别 → 结果缓存** 供本帧内所有判断与动作使用
-- 子事件匹配引入 **优先级 / 互斥组 / 多模板联合条件**（AND/OR）
-- 明确 `should_run_time` 与 `max_run_time` 语义：移除前必须校验 `has_run_time >= should_run_time`
-- 拖拽、点击动作增加 **边界与除零保护**
+| 领域 | 交付物 |
+|------|--------|
+| 正确性 | Drag/实例化/子事件语义修复；帧内识别缓存；完成判定防抖 |
+| 识别 | `recognition/`（template / feature / ocr / ui / color）、fallback、L2 `last_resort` |
+| 工程化 | `paths.py`、`config.yaml`、`freer_log`、`serialization`、白名单保存 |
+| API | `freer_api`（OpenAPI v1.0）：events / actions / config / task / logs |
+| 测试 | `tests/test_phase0.py`–`test_phase2.py` |
 
-### 4.2 性能
+### 4.2 待增强（Phase 3–4）
 
-- ADB 截屏改为 `subprocess` + 管道读 bytes，避免写盘 `sc.bmp`
-- 模板预加载与缓存；**所有 Matcher 强制 ROI**，禁止默认全屏扫描
-- 帧内 `match_cache` 避免同一 symbol 重复识别；OCR 支持降频
-- 单帧识别耗时预算（§4.5.6）：单 symbol ≤ 80 ms，整帧 ≤ 200 ms
-- 减少 `EventDispatch` 每轮重复 IO（窗口句柄缓存、配置热加载开关）
+| 能力 | 阶段 | 说明 |
+|------|------|------|
+| Tauri/React GUI | Phase 3 | 事件库、树形编排、任务控制台、ROI 实验室（§4.4） |
+| OpenAPI v1.1 | Phase 3 | pause/resume、validate、preview、tree、import/export |
+| 动作/任务 GUI | Phase 3 | 替代 PySide2；`View/` 标 deprecated |
+| 右键/长按、录制、多尺度 | Phase 4 | 按需 |
+| 跨平台纯 ADB | Phase 4 | 弱化 Win32 依赖 |
 
-### 4.3 工程化
-
-- 引入 `config.yaml`：ADB 设备 ID、数据目录、默认精度、日志路径
-- 路径基于 **项目根目录** 解析，消除 `./` vs `../` 分歧
-- `requirements.txt` + 最低 Python 版本说明
-- 结构化日志（`logging`）与可选 GUI 日志面板
-- 单元测试覆盖：`GetRandomPosition`、事件树构建、完成判定、Drag 索引逻辑
-
-### 4.4 功能扩展
-
-| 能力 | 说明 |
-|------|------|
-| 动作管理 GUI | 增删改 `action.json`；Phase 3 在 Tauri/React 中实现（§4.6） |
-| 任务运行 GUI | 选择根事件、重复次数、开始/停止/暂停；WebSocket 日志（§4.6.4） |
-| 右键点击 / 长按 | 补全 `action_type=2` 等 |
-| 多 Matcher 识别 | 见 **§4.5**，按场景路由 template / feature / ocr / ui / color |
-| 录制回放 | 截屏选点 → 自动生成微事件 |
-| 跨平台 | macOS/Linux 通过纯 ADB 输入输出，弱化 Win32 依赖 |
-
-### 4.5 识别方案升级（多 Matcher 路由）
-
-> **目标**：在不依赖 Airtest 的前提下，集成多种识别方案，按场景显式路由；控制单帧开销，避免 YOLO / CLIP 等重型方案进入默认路径。
-
-#### 4.5.1 设计原则
+### 4.3 识别方案（多 Matcher 路由）
 
 | 原则 | 说明 |
 |------|------|
@@ -161,7 +117,7 @@ flowchart TD
 | **可选 fallback 链** | 仅允许「从轻到重」顺序（如 `template → feature → ocr`），且受单帧耗时预算约束 |
 | **不引入 Airtest** | 自研 `recognition/` 模块，保持与 Freer 事件树调度解耦 |
 
-#### 4.5.2 目标架构
+#### 4.3.2 目标架构
 
 ```mermaid
 flowchart LR
@@ -184,26 +140,27 @@ flowchart LR
     CACHE --> EV[EventEx 调度]
 ```
 
-**目录结构（建议）**：
+**目录结构（当前）**：
 
 ```
 freer/
+├── Control.py, Models.py, Tools.py, main.py
+├── paths.py, config.py, config.yaml
+├── freer_log.py, serialization.py
 ├── recognition/
-│   ├── types.py          # SymbolSpec, Rect, FrameContext
-│   ├── router.py         # MatcherRouter
-│   ├── frame.py          # 截屏 + 坐标系
-│   ├── parse.py          # 兼容旧版字符串 symbol_start
-│   └── matchers/
-│       ├── template.py   # 多实例 + ROI + NMS
-│       ├── feature.py    # ORB（小模板 + ROI）
-│       ├── ocr.py        # PaddleOCR（ROI，懒加载）
-│       ├── ui.py         # uiautomator2（text / resourceId）
-│       └── color.py      # 色块 / 红点检测
-├── Control.py            # GetPosition / EventDispatch 接入 Router
-└── Tools.py              # Capture 迁入 AdbClient / frame.py
+│   ├── types.py, router.py, frame.py, parse.py
+│   ├── fallback.py, last_known.py, position_utils.py
+│   ├── adb_client.py
+│   └── matchers/          # template, feature, ocr, ui, color, roi
+├── freer_api/             # FastAPI sidecar（OpenAPI v1.0）
+├── View/                  # PySide2 过渡 GUI；Phase 3 后 deprecated
+├── data/, img/
+├── tests/test_phase0.py … test_phase2.py
+├── gui/                   # Phase 3 新建
+└── src-tauri/             # Phase 3 新建
 ```
 
-#### 4.5.3 Matcher 分级与场景路由
+#### 4.3.3 Matcher 分级与场景路由
 
 | match_type | 典型耗时 | 适用场景 | 备注 |
 |------------|----------|----------|------|
@@ -229,7 +186,7 @@ freer/
 
 以上可作为 Phase 4+ 可选插件，**默认关闭**。
 
-#### 4.5.4 统一数据结构与接口
+#### 4.3.4 统一数据结构与接口
 
 ```python
 @dataclass
@@ -252,9 +209,9 @@ class BaseMatcher:
     def match(self, frame: FrameContext, spec: SymbolSpec) -> list[Rect]: ...
 ```
 
-`EventEx.GetPosition()` 改为解析 `SymbolSpec` 并调用 `MatcherRouter.resolve()`；返回值保持 `[index, x1, y1, x2, y2]` 以兼容现有调度逻辑。
+`EventEx.GetPosition()` 解析 `SymbolSpec` 并调用 `MatcherRouter.resolve()`；返回值保持 `[index, x1, y1, x2, y2]` 以兼容调度逻辑。
 
-#### 4.5.5 配置格式（向后兼容）
+#### 4.3.5 配置格式（向后兼容）
 
 **旧格式**（继续支持）：
 
@@ -288,7 +245,7 @@ class BaseMatcher:
 
 `symbol_finish`、宏事件子事件触发条件共用同一套 `SymbolSpec` 解析。
 
-#### 4.5.6 性能预算
+#### 4.3.6 性能预算
 
 ```python
 MAX_MATCH_MS_PER_SYMBOL = 80    # 单个 symbol（含 fallback 链）上限
@@ -299,16 +256,16 @@ fallback 链累计超时则本帧该 symbol 判定为未命中，下帧重试；
 
 OCR 可选策略：上帧 ROI 内高置信命中则本帧 skip；或每 2–3 帧全量 OCR 一次。
 
-#### 4.5.7 与调度层的衔接
+#### 4.3.7 与调度层的衔接（已实现）
 
-| 调度点 | 改动 |
+| 调度点 | 行为 |
 |--------|------|
-| `EventDispatch` | 每轮开头 `self.frame = FrameContext.capture()`，初始化 `match_cache` |
-| `EventIsFinish` | 读 `match_cache`，完成判定加 **连续 N 帧防抖** |
-| `AddNextEvent` | 合并重复 `GetPosition` 调用；同标志子事件结合 `priority` + `index` |
-| `DoMicroEvent` | **执行前从当前帧 Router 取坐标**，废弃入栈时 `tmp_position` 缓存 |
+| `EventDispatch` | 每轮 `FrameContext.capture()` + `match_cache` |
+| `EventIsFinish` | 读缓存；连续 N 帧防抖 |
+| `AddNextEvent` | 合并 `GetPosition`；`priority` + `index` |
+| `DoMicroEvent` | 执行前从当前帧 Router resolve 坐标 |
 
-#### 4.5.8 依赖（按需安装）
+#### 4.3.8 依赖（按需安装）
 
 | 依赖 | 用途 | 安装策略 |
 |------|------|----------|
@@ -318,21 +275,10 @@ OCR 可选策略：上帧 ROI 内高置信命中则本帧 skip；或每 2–3 �
 
 不引入 Airtest、不默认引入 PyTorch / YOLO。
 
-#### 4.5.9 与现有问题清单的对应
-
-| 原问题 | 识别方案如何解决 |
-|--------|------------------|
-| P2-1 单点 minMaxLoc | TemplateMatcher 多实例 + NMS + `index` 选择 |
-| P0-5 同标志子事件冲突 | `priority` + 多实例 `index` + 不同 match_type |
-| P1-1 tmp_position 过期 | 帧内缓存 + DoMicroEvent 执行前重新 resolve |
-| P1-3 重复 GetPosition | FrameContext.match_cache |
-| P2-2 颜色空间错误 | frame.py 统一 BGR，按通道处理 |
-| 坐标系不一致 | ui / 纯 ADB 输入统一设备坐标；逐步弱化 Win32 PostMessage |
-
-#### 4.5.10 兜底识别策略
+#### 4.3.9 兜底识别策略
 
 > **结论：要考虑，但必须分层。**  
-> 「兜底」不等于「失败后自动试遍所有 Matcher」——那样会击穿 §4.5.6 性能预算，并提高误触概率。  
+> 「兜底」不等于「失败后自动试遍所有 Matcher」——那样会击穿 §4.3.6 性能预算，并提高误触概率。  
 > 正确做法是：**识别层兜底**（单 symbol 内）与 **调度层恢复**（宏事件级）分工，二者不要混为一谈。
 
 ##### 三层兜底模型
@@ -358,9 +304,9 @@ flowchart TD
 | **L2** 事件级兜底 | 不依赖当前帧图像的坐标回退 | L1 全链失败 | 极低 |
 | **L3** 调度层恢复 | 换事件路径或中止任务 | 无法入栈 / 长期空转 | 无额外识别 |
 
-Freer **已有** L3 机制（`exception_list`、`inactive_list`、`max_rotate_time`），升级重点是补全 L1/L2，并与 L3 明确衔接。
+Freer **沿用** L3 机制（`exception_list`、`inactive_list`、`max_rotate_time`）；L1/L2 已在 Phase 1–2 落地。
 
-##### L1：symbol 内 fallback（已有，需规范）
+##### L1：symbol 内 fallback（已实现）
 
 - 仅允许配置声明的 `fallback` 列表，**禁止** Router 自动遍历全部 Matcher。
 - fallback 顺序固定为从轻到重；累计超时则本帧判定未命中，**下帧重试**，不在同一帧无限降级。
@@ -375,7 +321,7 @@ class SymbolSpec:
     max_fallback_steps: int = 2             # 除主 Matcher 外最多再试几步
 ```
 
-##### L2：事件级兜底（建议新增）
+##### L2：事件级兜底（已实现）
 
 当 L1 全链失败后，在 **微事件 / 子事件** 上按配置选择：
 
@@ -445,21 +391,21 @@ def resolve_for_action(self, spec, event):
     return rects  # 空则调度层走 L3，不执行点击
 ```
 
-##### 实施阶段
+##### 兜底实施状态
 
-| 阶段 | 兜底相关交付 |
-|------|--------------|
-| Phase 1 | L1 fallback 链 + 性能预算；`last_resort: none` 默认 |
-| Phase 1.5 | L2：`default_position` / `expand_roi` / `last_known` + TTL 缓存 |
-| Phase 2 | L3：`max_consecutive_miss_frames`、调试截图、暂停任务 |
-| Phase 3 | GUI 配置 `last_resort`、fallback 链可视化 |
+| 阶段 | 状态 | 交付 |
+|------|------|------|
+| Phase 1 | 已完成 | L1 fallback + 性能预算 |
+| Phase 1.5 | 已完成 | L2 `default_position` / `expand_roi` / `last_known` |
+| Phase 2 | 已完成 | L3 `max_consecutive_miss_frames`、调试截图、暂停任务 |
+| Phase 3 | 待实施 | GUI 配置 `last_resort`、fallback 链可视化 |
 
-### 4.6 GUI 升级方案（路线 B：Python 引擎 + Tauri/React 界面）
+### 4.4 GUI 升级方案（路线 B：Python 引擎 + Tauri/React 界面）
 
 > **选定策略**：GUI 产品化采用 **路线 B**——保留现有 Python 引擎（`Control.py` / `Tools.py` / `recognition/`），界面层用 **Tauri 2 + React** 重写；Rust 仅承担 Tauri 要求的原生壳与 IPC 胶水，**不重写调度与识别逻辑**。  
 > 视觉参考 [CC Switch](https://github.com/farion1231/cc-switch)（Tauri 2 + React + shadcn/ui）；Freer 与之差异在于业务后端仍为 Python sidecar，而非 Rust 全栈（路线 C）。
 
-#### 4.6.1 方案对比（为何选 B）
+#### 4.4.1 方案对比（为何选 B）
 
 | 路线 | 界面 | 引擎 | Rust 工作量 | 适用 |
 |------|------|------|-------------|------|
@@ -469,7 +415,7 @@ def resolve_for_action(self, spec, event):
 
 **路线 B 为何涉及 Rust**：并非引擎需要 Rust，而是 **Tauri 框架本身**要求一层 Rust 运行时（窗口、WebView、sidecar、系统 API）。B 中 Rust 不写业务，只写「启动 Python、转发命令、读文件、系统托盘」等胶水代码。若完全不想碰 Rust，可改用 Electron 或 pywebview，但会失去 Tauri 的小体积与原生集成优势。
 
-#### 4.6.2 目标架构
+#### 4.4.2 目标架构
 
 ```mermaid
 flowchart TB
@@ -504,7 +450,7 @@ flowchart TB
 | **胶水** | Tauri 2、Rust（serde、tokio、tauri-plugin-shell/log/dialog） | 窗口与 WebView、启动/监控 Python sidecar、IPC 转发、本地文件与托盘 |
 | **引擎** | Python 3、`Control.py`、`Models.py`、`Tools.py`、`recognition/` | 事件 CRUD、调度运行、OpenCV/ADB/Win32、识别路由 |
 
-#### 4.6.3 前端技术栈（对齐 CC Switch 视觉）
+#### 4.4.3 前端技术栈（对齐 CC Switch 视觉）
 
 | 类别 | 选型 | 用途 |
 |------|------|------|
@@ -517,23 +463,37 @@ flowchart TB
 | 拖拽 | @dnd-kit | 子事件 / 异常列表排序 |
 | 图标 | lucide-react | 与 shadcn 配套 |
 
-#### 4.6.4 Python ↔ 前端 IPC 设计
+#### 4.4.4 Python ↔ 前端 IPC 设计
 
 引擎对外暴露 **稳定 API 边界**，GUI 不直接 import `Control.py`，统一经 `freer_api/` 服务层调用。
 
 **推荐传输**：开发期 **本地 HTTP（FastAPI / uvicorn）** 或 **WebSocket**（任务日志流）；Tauri sidecar 启动 Python 进程并监听固定端口（如 `127.0.0.1:17890`）。备选：stdin/stdout JSON-RPC（调试简单，但不利于日志流）。
 
-**API 分组（初版）**：
+**API 分组**：
 
-| 模块 | 方法示例 | 说明 |
-|------|----------|------|
-| **配置** | `GET/PUT /config` | 读写在 `config.yaml` |
-| **事件** | `GET/POST/PUT/DELETE /events` | CRUD `event.json`；含校验 |
-| **动作** | `GET/POST/PUT/DELETE /actions` | CRUD `action.json` |
-| **模板** | `GET /templates`、`POST /capture` | 列出 `img/`、ADB 截屏 |
-| **任务** | `POST /task/start`、`POST /task/stop`、`GET /task/status` | 包装 `EventEx` |
-| **日志** | `WS /logs` 或 SSE | 结构化日志推送到任务控制台 |
-| **识别调试** | `POST /recognize/preview` | 单帧截屏 + Matcher 结果（ROI 编辑器用） |
+| 模块 | 方法示例 | v1.0 | v1.1 |
+|------|----------|:----:|:----:|
+| 配置 | `GET/PUT /config` | ✓ | |
+| 事件 CRUD | `GET/POST/PUT/DELETE /events` | ✓ | |
+| 动作 CRUD | `GET/POST/PUT/DELETE /actions` | ✓ | |
+| 模板/截屏 | `GET /templates`、`POST /capture` | ✓ | |
+| 任务 | `POST /task/start`、`POST /task/stop`、`GET /task/status` | ✓ | pause/resume、状态扩展 |
+| 日志 | `WS /logs` | ✓ | |
+| 健康 | `GET /health` | ✓ | |
+| 编排树 | `GET /events/{name}/tree` | | ✓ |
+| 校验 | `POST /events/validate` | | ✓ |
+| 识别预览 | `POST /recognize/preview` | | ✓ |
+| 静态资源 | `GET /assets/img/{path}` | | ✓ |
+| 导入导出 | `POST /export`、`POST /import` | | ✓ |
+
+**OpenAPI 版本**：
+
+| 版本 | 范围 | 说明 |
+|------|------|------|
+| **v1.0** | Phase 2 已交付 | events/actions/config/task/health/logs |
+| **v1.1** | Phase 3 冻结 | 上表新增端点 + task 状态机扩展；破坏性变更升 v2 |
+
+**类型同步（已定案）**：前端使用 `openapi-typescript` 从 `/openapi.json` 生成 `gui/src/api/types.ts`；UI 层用 zod 做表单校验，以生成类型为源，CI 做契约回归。
 
 **响应约定**：JSON 统一 `{ "ok": true, "data": ... }` / `{ "ok": false, "error": { "code", "message" } }`；引擎异常映射为 HTTP 4xx/5xx，不向前端抛 Python traceback。
 
@@ -544,235 +504,178 @@ flowchart TB
 3. 应用退出 → Rust 发送 `POST /shutdown` 并等待进程结束
 4. Sidecar 崩溃 → 前端告警 + Rust 可选自动重启（限次数）
 
-#### 4.6.5 建议目录结构
+#### 4.4.5 目录结构
+
+Phase 3 完成后目标布局（引擎保持根目录，**不**迁入 `engine/` 子包）：
 
 ```
 freer/
-├── engine/                     # 现有 Python 引擎（由根目录逐步迁入）
-│   ├── Control.py
-│   ├── Models.py
-│   ├── Tools.py
-│   ├── recognition/
-│   └── freer_api/              # 新增：HTTP/WS 服务层
-│       ├── __main__.py         # sidecar 入口
-│       ├── app.py              # FastAPI 应用
-│       ├── routes/             # events / actions / task / logs
-│       └── schemas.py          # Pydantic 模型（与前端 zod 对齐）
-├── gui/                        # Tauri + React 前端（新建）
-│   ├── src/
-│   │   ├── components/
-│   │   │   └── ui/             # shadcn/ui
-│   │   ├── pages/              # EventEditor / TaskConsole / TemplateLab
-│   │   ├── lib/                # api client、Tauri invoke 封装
-│   │   └── hooks/
-│   ├── package.json
-│   └── vite.config.ts
-├── src-tauri/                  # Tauri Rust 胶水
-│   ├── src/
-│   │   ├── main.rs
-│   │   ├── commands.rs         # 薄封装：调 sidecar HTTP 或读本地文件
-│   │   └── sidecar.rs          # 启动/监控 Python 进程
-│   └── tauri.conf.json
-├── data/                       # 配置数据（路径由 config 统一）
-├── img/
-└── View/                       # 旧 PySide2 GUI；Phase 3 完成后标记 deprecated
+├── Control.py, Models.py, Tools.py, recognition/, freer_api/   # 现有引擎
+├── paths.py, config.yaml, freer_log.py, serialization.py
+├── gui/                        # Phase 3：React + shadcn
+│   └── src/pages/              # EventEditor / TaskConsole / TemplateLab
+├── src-tauri/                  # Phase 3：sidecar 生命周期、薄 commands
+├── data/, img/
+└── View/                       # deprecated（Phase 3 后）
 ```
 
-#### 4.6.6 主界面信息架构（单窗口）
+#### 4.4.6 与分阶段路线图的衔接
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 菜单：文件 | 事件 | 动作 | 运行 | 设置                       │
-├──────────────┬──────────────────────────────────────────────┤
-│ 事件树       │ 主内容区（Tabs / 路由）                        │
-│ QTree 等价   │  ├─ 事件属性（微/宏动态表单 + match_type）     │
-│              │  ├─ 动作编辑器                                │
-│              │  ├─ 模板库 + ROI 预览（Canvas 选框）           │
-│              │  └─ 任务控制台 + 实时日志（WebSocket）         │
-├──────────────┴──────────────────────────────────────────────┤
-│ 状态栏：Sidecar 状态 | ADB | 当前事件 | 识别耗时              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-与 §4.4 功能扩展及 Phase 3 任务一一对应；旧 `AddEvent.py` / `EditEvent.py` 合并为单一 SPA。
-
-#### 4.6.7 与分阶段路线图的衔接
-
-| 阶段 | GUI 相关交付 | 说明 |
+| 阶段 | GUI 相关交付 | 状态 |
 |------|--------------|------|
-| **Phase 2** | `freer_api/` 骨架 + 事件/动作 REST；旧 PySide 抽 `event_form_common`（可选，短期并存） | **先定 API 边界**，GUI 与引擎解耦 |
-| **Phase 3** | 新建 `gui/` + `src-tauri/`；实现事件/动作 CRUD、任务控制台、模板 ROI、识别配置表单 | **路线 B 主交付**；弃用 PySide 为主入口 |
-| **Phase 4+** | 录制向导、导入导出、可选 Web 远程控制台 | 仍走同一 `freer_api`，前端加页面即可 |
+| **Phase 2** | `freer_api` v1.0、`event_form_common` | 已完成 |
+| **Phase 3** | `gui/` + `src-tauri/`、树形编排、v1.1 API | 进行中（v1.1 API + 脚手架已落地） |
+| **Phase 4+** | 录制向导、Web 远程控制台 | 未开始 |
 
-**Phase 2 新增任务（相对 §五 Phase 2 原表）**：
-
-| 任务 | 说明 |
-|------|------|
-| `freer_api` 服务层 | FastAPI + Pydantic；事件/动作/配置 CRUD；与 `DataManager` 对接 |
-| API 契约文档 | OpenAPI → 前端生成类型；与 zod schema 同步 |
-| Sidecar 原型 | `python -m freer_api` 可独立启动；`GET /health` |
-
-**Phase 3 修订任务（路线 B 取代原 PySide 扩展）**：
-
-| 任务 | 说明 |
-|------|------|
-| Tauri 项目初始化 | `gui/` + `src-tauri/`；dev 联调 sidecar |
-| 事件/动作管理页 | React + shadcn；对接 REST |
-| 任务控制台 | Start/Stop、repeat、WebSocket 日志 |
-| 模板与 ROI | 截屏预览 + Canvas 选框 → 写回 `roi_*` |
-| 识别配置表单 | `match_type`、fallback、`last_resort`（§4.5、§4.5.10） |
-| 事件校验器 | 保存前 zod + 后端二次校验 |
-| 打包 | Tauri bundle + Python sidecar（PyInstaller 或内嵌 venv）；文档化安装依赖 |
-
-#### 4.6.8 打包与部署
-
-| 项 | 建议 |
-|----|------|
-| **Python 分发** | PyInstaller 打 `freer-engine.exe` 作 sidecar；或安装包内带最小 venv |
-| **体积预期** | 大于纯 Tauri（~15MB），因含 Python + OpenCV；目标可控在 **80–150MB** |
-| **开发环境** | Node 18+、pnpm、Rust 1.85+、Tauri CLI 2.8+、Python 3.10+ |
-| **旧 GUI** | Phase 3 完成前保留 `View/AddEvent.py` 作 fallback；README 注明迁移状态 |
-
-#### 4.6.9 风险与缓解（路线 B 专项）
+#### 4.4.7 风险与缓解（路线 B 专项）
 
 | 风险 | 缓解 |
 |------|------|
-| IPC 协议频繁变动 | Phase 2 冻结 OpenAPI v1；破坏性变更升版本 |
+| IPC 协议频繁变动 | Phase 2 冻结 OpenAPI v1.0；**Phase 3 开工前冻结 v1.1**；破坏性变更升版本 |
 | Sidecar 启动失败 | 健康检查 + 明确错误 UI；日志写 `%APPDATA%/freer/logs` |
-| 双进程调试复杂 | 开发脚本一键 `pnpm tauri dev` + 自动起 API；集成测试 mock HTTP |
+| 双进程调试复杂 | **双模式开发（已定案 B）**：集成模式 `pnpm tauri dev` 自动起 sidecar；前端模式 `pnpm dev` + 手动 `python -m freer_api`；见 §4.4.8.1 |
 | Python 打包跨机器差异 | CI 打 Windows 安装包；文档列 OpenCV/ADB 前置条件 |
 | Rust 胶水维护成本 | 严格限制 `src-tauri` 职责，业务逻辑禁止写入 Rust |
 | 与路线 C 混淆 | 文档明确：B 的 Rust 仅胶水；引擎迁移 Rust 属 Phase 4+ 可选演进 |
 
 **可选演进 B → C**：API 稳定后，可将 `freer_api` 背后实现逐模块换为 Rust，最终去掉 Python sidecar；非 Phase 3 范围。
 
----
+#### 4.4.8 Phase 3 详细设计（已定案）
 
-## 五、分阶段升级路线图
+> **原则**：不限工期，优先完成度与质量。React 只调 HTTP/WebSocket；Rust 只写胶水；业务留在 Python。
 
-### Phase 0 — 紧急修复（1–2 周）
+##### 4.4.8.1 开发模式（双模式 B）
 
-**目标**：消除确定性 Bug，保证单任务、单实例基本可用。
+| 模式 | 命令 | 用途 |
+|------|------|------|
+| **集成模式** | `pnpm tauri dev` | Tauri 启动 sidecar；`GET /health` 通过后渲染主界面；贴近生产 |
+| **前端模式** | `python -m freer_api` + `pnpm dev` | 日常 UI 开发；Vite 代理 API |
 
-| 任务 | 对应问题 | 建议改动 |
-|------|----------|----------|
-| 修复 Drag 循环 | P0-1 | 将 `i += 2` 移出 `run_time` 内层循环；补充单点拖拽保护 |
-| 实例化状态 | P0-2, P0-3 | `EventEx.__init__` 中初始化 `self.stack=[]` 等；模型类去掉类级可变默认值 |
-| 子事件完成语义 | P0-4 | 移除子事件前断言 `has_run_time >= should_run_time`；或改为仅标记 inactive 不移除 |
-| 图像读取防护 | P0-6 | `imread` 失败时重试截屏或抛出自定义异常并中止任务 |
-| 除零保护 | P0-7 | Drag 中检测起终点距离，过近则跳过或瞬移 |
-| 路径统一 | P1-10 | 新增 `paths.py` 或 `config`，全局使用 `PROJECT_ROOT / "data" / ...` |
+Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 
-**验收标准**：
+##### 4.4.8.2 事件库与树形编排编辑器（已定案：树形，非纯表单）
 
-- [ ] `run_time=3` 的拖拽动作坐标索引正确
-- [ ] 连续启动两个 `EventEx` 互不干扰
-- [ ] `max_run_time=1, should_run_time=2` 时父宏事件不会错误完成
-- [ ] 删除 `sc.bmp` 后程序给出明确错误而非崩溃
+`event.json` 为**扁平事件目录**；宏事件的 `event_list` / `exception_list` 为**引用 + 运行参数**。编辑器编排的是「某个宏事件的组合视图」，不是把整个 JSON 变成一棵树。
 
----
+**三栏布局**：
 
-### Phase 1 — 调度与识别稳定性（2–3 周）
+```
+┌─────────────┬──────────────────────┬─────────────────┐
+│ 事件目录     │  编排树（当前宏事件）   │  属性面板        │
+│ 搜索/新建    │  子事件 / 异常分支     │  选中节点字段     │
+│             │  DnD 排序 / 宏嵌套展开  │  识别/ROI 入口   │
+└─────────────┴──────────────────────┴─────────────────┘
+```
 
-**目标**：提升长时间运行稳定性，降低误触与空转；搭建识别模块骨架。
+| 节点类型 | 表现 |
+|----------|------|
+| 子微事件 | 叶子节点 |
+| 子宏事件 | 可展开，递归展示下级（懒加载 `GET /events/{name}/tree`） |
+| 异常事件 | 独立色带/分支 |
+| 编排元数据 | `should_run_time` / `max_run_time` / `priority` 徽章或侧栏 |
 
-| 任务 | 说明 |
+**交互**：从目录拖入子事件/异常；拖拽排序；删除引用（可选同时删定义）；保存前环检测。
+
+**实施顺序**：先完成单事件属性表单（微/宏 + 识别字段），再接入树形编排，避免返工。
+
+##### 4.4.8.3 任务控制：软暂停 vs 硬停止
+
+| 操作 | API | 语义 |
+|------|-----|------|
+| **软暂停** | `POST /task/pause` | 保留 `stack` 与编排状态；在 **EventDispatch 帧边界**生效；当前微事件跑完后进入 paused |
+| **恢复** | `POST /task/resume` | 从暂停点继续 |
+| **硬停止** | `POST /task/stop` | 不可恢复；安全点清空栈，重置 runner |
+
+**状态机**：`idle` → `running` ⇄ `paused` → `stopping` → `idle`；以及 `completed` / `error`。
+
+`GET /task/status` 扩展：`route`（当前 `GetEventRoute()`）、`pause_pending`（已请求暂停，等待微事件结束）、`current_event`。
+
+**UI 映射**：running → Pause + Stop；paused → Resume + Stop；idle → Start。
+
+##### 4.4.8.4 单窗口信息架构
+
+| 导航 | 内容 |
 |------|------|
-| 帧内识别缓存 | `EventDispatch` 每轮：`FrameContext.capture()` 一次 → `match_cache` → 所有识别读缓存 |
-| 微事件坐标刷新 | `DoMicroEvent` 从当前帧 Router resolve 坐标，不再依赖入栈时 `tmp_position` |
-| 识别模块骨架 | 新增 `recognition/`：`types.py`、`router.py`、`frame.py`、`parse.py` |
-| TemplateMatcher | 多实例 threshold + NMS + ROI + `index`；修复 BGR 颜色空间 |
-| MatcherRouter | 注册 template Matcher；支持 `SymbolSpec` 与旧字符串格式兼容 |
-| 子事件歧义消解 | 为子事件增加 `priority` 字段；同标志时取优先级最高者 |
-| 完成判定防抖 | 连续 N 帧（如 2–3 帧）满足完成条件才出栈 |
-| 窗口句柄缓存 | 按 `window_name` 缓存 hwnd，失效时重新查找；找不到则 **暂停任务** |
-| ADB 封装 | `AdbClient` 类：设备 ID 可配置、截屏/输入返回码检查；截屏优先管道读 bytes |
-| 重复 GetPosition | 合并为单次调用（P1-3） |
-| 性能预算 | 实现 `MAX_MATCH_MS_PER_SYMBOL` / `MAX_MATCH_MS_PER_FRAME` 常量与超时中断 |
+| 事件库 | 目录 + 树形编排 + 属性（§4.4.8.2） |
+| 动作 | 动作 CRUD |
+| 任务 | 根事件、repeat、控制台、WS 日志 |
+| 模板/ROI | 图库、截屏、Canvas 选框、preview |
+| 设置 | `config.yaml`、data 路径、ADB |
 
-**验收标准**：
+##### 4.4.8.5 打包与部署（已定案）
 
-- [ ] 界面轻微动画下点击命中率可配置提升
-- [ ] 相同 `symbol_start` 的子事件可通过 priority 区分
-- [ ] ADB 断开时任务停止并提示，不 silent fail
-- [ ] 同屏多个相同 icon 可通过 `index` 选中正确目标
-- [ ] 旧版纯字符串 `symbol_start` 配置无需修改即可运行
+1. `pyinstaller` → `freer-engine.exe`（sidecar）
+2. `pnpm build` + `pnpm tauri build` → 捆绑 sidecar → Windows NSIS
+3. 干净 VM 验收；ADB 由用户自备
 
----
+| 项 | 说明 |
+|----|------|
+| 体积预期 | **80–150MB**（含 Python + OpenCV） |
+| 开发环境 | Node 18+、pnpm、Rust 1.85+、Tauri CLI 2.8+、Python 3.10+ |
+| 旧 GUI | Phase 3 完成前保留 `View/` 作 fallback |
 
-### Phase 1.5 — 多 Matcher 扩展（2 周）
+##### 4.4.8.6 实施顺序（按依赖，非工期）
 
-**目标**：按场景接入轻量识别方案，完成显式路由；仍不引入重型 ML。
+```
+0. OpenAPI v1.1 + pause/resume + validate + preview + tree API
+1. Tauri 脚手架 + 双模式 + health 门控
+2. openapi-typescript + 设置页 + 动作 CRUD
+3. 事件属性表单（微/宏 + 识别高级字段）
+4. 树形编排编辑器（DnD + 异常 + 环检测）
+5. 任务控制台 + WS 日志
+6. 模板/ROI 实验室
+7. 导入/导出 zip
+8. PyInstaller + Tauri 打包 + VM 验收
+9. PySide deprecated + 文档
+```
 
-| 任务 | 说明 |
-|------|------|
-| FeatureMatcher | ORB 特征点匹配；限制小模板 + ROI；作为 template 的 fallback |
-| OcrMatcher | PaddleOCR 懒加载单例；**仅 ROI 内识别**；支持关键字 / 简单正则 |
-| UiMatcher | uiautomator2：按 text / resourceId / content-desc 查询；连接单例缓存 |
-| ColorMatcher | ROI 内色块 / 红点检测；适用于状态指示 |
-| fallback 链 | Router 支持 `SymbolSpec.fallback`，从轻到重顺序尝试 |
-| 事件级兜底 L2 | `last_resort`：`default_position` / `last_known` / `expand_roi` / `pause` |
-| last_known 缓存 | 同 symbol 上次命中坐标，TTL 可配置，出栈清除 |
-| OCR 降频 | 上帧高置信命中 skip 或每 N 帧 OCR 一次 |
-| 配置扩展 | 事件 JSON 支持 `match_type_start/finish`、`roi_*`、`match_fallback_*` |
-| 单元测试 | TemplateMatcher NMS、SymbolSpec 解析、Router fallback 顺序、性能预算中断 |
+##### 4.4.8.7 建议 PR 切分
 
-**验收标准**：
-
-- [ ] 文字按钮事件使用 `match_type: ocr` 可稳定触发
-- [ ] 系统弹窗事件使用 `match_type: ui` 可稳定触发
-- [ ] 未安装 paddleocr / uiautomator2 时，对应 Matcher 跳过并给出明确提示
-- [ ] 单帧识别总耗时超预算时不阻塞主循环超过 200 ms
-- [ ] fallback 链 `template → feature` 在模板失败时可自动降级命中
-- [ ] `last_resort: default_position` 在识别失败时可回退固定坐标
-- [ ] `last_resort: pause` 在关键步骤识别失败时暂停任务而非盲点
-
----
-
-### Phase 2 — 工程化与可维护性（2–3 周）
-
-**目标**：降低配置与开发成本，便于协作与测试。
-
-| 任务 | 说明 |
-|------|------|
-| 配置系统 | `config.yaml`：`adb_device`、`data_dir`、`capture_mode`、`log_level`、`recognition.max_consecutive_miss_frames` |
-| 依赖与文档 | `requirements.txt`；README 增加故障排查章节 |
-| 日志模块 | 替换 print；文件轮转；关键事件（入栈/出栈/异常/空转）结构化记录 |
-| 序列化清理 | 保存 JSON 时白名单字段；剥离 `hwnd`、`has_run_time` 等运行时状态 |
-| 代码整理 | 抽取 `View/event_form_common.py` 消除 Add/Edit 重复（旧 GUI 过渡用） |
-| **`freer_api` 服务层** | FastAPI sidecar：事件/动作/配置 CRUD；OpenAPI 契约（见 **§4.6.4**） |
-| 测试 | pytest：调度逻辑 + `recognition/` Matcher 与 Router 单测 + `freer_api` 接口测 |
-
-**验收标准**：
-
-- [ ] 从任意 cwd 启动 `main.py` 与 `python -m freer_api` 读写同一 data 目录
-- [ ] 核心逻辑测试覆盖率 > 60%（调度与动作模块）
-- [ ] `GET /events`、`POST /task/start` 等 API 可用 curl/前端独立调用
+| PR | 内容 |
+|----|------|
+| engine-api-v1.1 | pause/resume、validate、preview、tree、assets、import/export |
+| tauri-scaffold | 双模式、health、崩溃 UI |
+| gui-foundation | 类型生成、布局、设置、动作 |
+| event-forms | 微/宏属性 + 识别字段 |
+| event-tree-editor | 三栏树形编排 |
+| task-console | 状态机 UI + 日志 |
+| template-roi-lab | Canvas + preview |
+| import-export | 事件包 |
+| packaging-windows | PyInstaller + Tauri |
+| docs-deprecate-pyside | README 迁移 |
 
 ---
 
-### Phase 3 — 产品化 GUI（路线 B：Tauri + React）（4–6 周）
+## 五、分阶段路线图
 
-**目标**：以 **§4.6 路线 B** 交付现代 GUI，Python 引擎经 `freer_api` 提供服务；旧 PySide2 界面降级为 fallback。
+### Phase 0–2 — 已完成
 
-| 任务 | 说明 |
-|------|------|
-| Tauri + React 脚手架 | 新建 `gui/`、`src-tauri/`；Tailwind + shadcn/ui；dev 联调 sidecar |
-| Sidecar 集成 | Rust 启动/监控 Python；健康检查；日志转发 |
-| 事件 / 动作管理 | 单窗口 SPA；合并原 Add/Edit；对接 REST |
-| 任务控制台 | 选根事件、repeat、Start/Stop/Pause；WebSocket 日志 |
-| 事件校验器 | 前后端双重校验：引用、循环依赖、路径、match_type / ROI |
-| 模板管理 | `img/` 预览；Canvas ROI 选框；写回 `roi_*` |
-| 识别配置 GUI | `match_type`、fallback、`last_resort` 表单（§4.5、§4.5.10） |
-| 导入导出 | 事件包（json + img）打包/加载 |
-| 打包发布 | Tauri bundle + Python sidecar；Windows 安装包与 README |
+| 阶段 | 版本 | 测试 | 要点 |
+|------|------|------|------|
+| **0** 紧急修复 | V0.2 | `test_phase0` | Drag、实例化、子事件语义、`paths.py`、截图防护 |
+| **1** 调度与识别 | V0.2 | `test_phase1` | `recognition/`、帧缓存、TemplateMatcher、priority、防抖、ADB |
+| **1.5** 多 Matcher | V0.25 | `test_phase15` | feature/ocr/ui/color、fallback、L2 `last_resort` |
+| **2** 工程化 | V0.3 | `test_phase2` | `config.yaml`、`freer_log`、序列化、`freer_api` v1.0 |
+
+验收项均已通过（见 `tests/`）。
+
+---
+
+### Phase 3 — 产品化 GUI（路线 B：Tauri + React）
+
+**目标**：交付 Tauri + React GUI（§4.4.8）；`freer_api` v1.1；旧 PySide2 标 `deprecated`。不限工期，优先完成度与质量。
+
+**里程碑与 PR 切分**：见 §4.4.8.6、§4.4.8.7。
 
 **验收标准**：
 
-- [ ] 不启动 PySide 即可完成事件 CRUD、任务运行、日志查看
-- [ ] Sidecar 异常退出时界面有明确提示，不 silent fail
-- [ ] ROI 选框结果保存后，引擎识别可正确使用
-- [ ] 安装包在干净 Windows 环境可安装运行（文档列 ADB/OpenCV 前置条件）
+- [ ] 不启动 PySide 即可完成：事件库、**树形编排**、动作 CRUD、识别配置、ROI、任务运行、日志
+- [ ] Sidecar 异常退出时界面有明确提示，可重试，不 silent fail
+- [ ] 软暂停后可 Resume 并从帧边界继续；硬 Stop 不可恢复
+- [ ] ROI 选框保存后引擎识别正确；`recognize/preview` 与引擎一致
+- [ ] 编排保存通过 `POST /events/validate`（环、引用、ROI）
+- [ ] 干净 Windows 环境可安装运行（文档列 ADB/OpenCV 前置）
+- [ ] `openapi-typescript` 生成类型与 `/openapi.json` 同步（CI 契约检查）
 
 ---
 
@@ -789,94 +692,46 @@ freer/
 
 ---
 
-## 六、重点修复示例（Phase 0）
-
-### 6.1 Drag 索引修复
-
-```python
-# 当前（错误）
-while i < len(position):
-    for j in range(action.run_time):
-        ...
-        i += 2  # 不应在内层
-
-# 建议
-while i + 1 < len(position):
-    for _ in range(action.run_time):
-        ...
-    i += 2
-    time.sleep(Tools.RandomTool.getRandomGap(event_gap))
-```
-
-### 6.2 EventEx 实例状态
-
-```python
-def __init__(self, event_name, repeat_time=1):
-    self.stack = []
-    self.run_time = 0
-    self.pre_cursor = None
-    self.tmp_position = None
-    self.has_repeat_time = 0
-    ...
-```
-
-### 6.3 子事件移除前校验
-
-```python
-if child['has_run_time'] >= child['max_run_time']:
-    if child['has_run_time'] < child['should_run_time']:
-        # 记录告警：未达最少次数即触达上限
-        logging.warning(...)
-    ...
-```
-
----
-
-## 七、风险与依赖
+## 六、风险与依赖
 
 | 风险 | 缓解措施 |
 |------|----------|
-| 修复子事件语义可能改变现有脚本行为 | 提供 `legacy_mode` 配置开关；迁移说明文档 |
-| OpenCV/ADB 环境差异 | CI 仅测纯逻辑；集成测试文档化手动步骤 |
-| GUI 重构工作量大 | **路线 B**（§4.6）：Phase 2 先 `freer_api`，Phase 3 再 Tauri/React；旧 PySide 作过渡 |
-| Sidecar / IPC 不稳定 | Phase 2 冻结 OpenAPI；集成测试 + 健康检查；见 §4.6.9 |
-| Python sidecar 打包体积大 | PyInstaller 单文件 sidecar；文档化依赖；Phase 4+ 可选 B→C 瘦身 |
-| 识别方案变更导致旧配置行为变化 | 旧字符串 `symbol_start` 默认解析为 template；提供迁移说明与示例 |
-| OCR / uiautomator2 为可选依赖 | `requirements-optional.txt` 分组；缺失时 Router 跳过并日志告警 |
-| fallback 链拖慢主循环 | 严格执行 §4.5.6 性能预算；超时不继续降级 |
-| 兜底误点 | `last_known` 必须 TTL；关键步骤默认 `last_resort: none` 或 `pause`；禁止失败点 (0,0) |
-| last_resort 改变脚本语义 | 默认 `none`；文档说明各选项；GUI 显式配置 |
+| OpenCV/ADB 环境差异 | CI 测纯逻辑；集成测试文档化手动步骤 |
+| GUI 重构工作量大 | 路线 B：API 已就绪；按 §4.4.8 PR 切分渐进交付 |
+| Sidecar / IPC 不稳定 | OpenAPI v1.0 已冻结；v1.1 开工前冻结；见 §4.4.7 |
+| Python sidecar 打包体积大 | PyInstaller + 文档化依赖；Phase 4+ 可选 B→C |
+| 识别配置行为变化 | 旧字符串 `symbol_start` 默认 template；README 迁移示例 |
+| OCR / uiautomator2 可选依赖 | `requirements-optional.txt`；缺失时跳过并告警 |
+| fallback / last_resort 误点 | 性能预算 §4.3.6；`last_known` TTL；关键步骤默认 `pause` |
+| 子事件语义变更影响旧脚本 | 必要时 `legacy_mode` 开关（未实现，按需） |
 
 ---
 
-## 八、建议优先级总结
+## 七、当前优先级
 
 ```
-P0 逻辑 Bug（Drag / 类变量 / 子事件计数 / 空指针）
-    ↓
-P1 调度稳定性 + 识别骨架（FrameContext / TemplateMatcher / Router / 防抖 / ADB）
-    ↓
-P1.5 多 Matcher 路由（feature / ocr / ui / color + fallback + 配置扩展）
-    ↓
-P2 工程化（配置 / 日志 / 测试 / 序列化 / freer_api）
-    ↓
-P3 产品化 GUI — 路线 B（Tauri + React + Python sidecar，§4.6）
-    ↓
-P4 多尺度 / 纯 ADB / 录制 / 可选重型 Matcher / 可选 B→C 引擎迁移
+Phase 3（进行中）
+  → engine-api-v1.1
+  → tauri-scaffold → gui-foundation → event-forms → event-tree-editor
+  → task-console → template-roi-lab → import-export → packaging-windows
+
+Phase 4（按需）
+  → 多尺度 template / 纯 ADB / 录制 / 插件化 Matcher
+  → §二 遗留 P1/P2 小修
 ```
 
 ---
 
-## 九、版本目标建议
+## 八、版本目标
 
-| 版本 | 主题 | 关键交付 |
-|------|------|----------|
-| **V0.2** | 稳定版 | Phase 0 + Phase 1 全部完成 |
-| **V0.25** | 识别版 | Phase 1.5 完成，多 Matcher 路由可用 |
-| **V0.3** | 工程版 | Phase 2 完成，具备测试、配置与 `freer_api` |
-| **V0.4** | 工具版 | Phase 3 完成，Tauri/React GUI 闭环（路线 B，含识别配置） |
-| **V1.0** | 正式版 | 文档齐全、核心场景验证通过、已知 P0/P1 清零 |
+| 版本 | 主题 | 状态 | 关键交付 |
+|------|------|------|----------|
+| **V0.2** | 稳定版 | **已达成** | Phase 0 + Phase 1 |
+| **V0.25** | 识别版 | **已达成** | Phase 1.5 多 Matcher 路由 |
+| **V0.3** | 工程版 | **已达成** | Phase 2：`config`、`freer_api`、日志、序列化 |
+| **V0.4** | 工具版 | 进行中 | Phase 3：Tauri/React + 树形编辑器 + v1.1 API（§4.4.8） |
+| **V1.0** | 正式版 | — | 文档齐全、核心场景验证、P0/P1 清零 |
 
 ---
 
-*文档生成依据：仓库 master 分支当前代码静态分析；§4.5 识别方案基于多 Matcher 路由架构设计；§4.6 GUI 采用路线 B（Python 引擎 + Tauri/React）。实施时建议为每项 Phase 0/1/1.5 修复补充回归用例后再合并。*
+*文档维护：`cursor/upgrade-plan` 分支。§4.3 识别路由、§4.4 GUI（路线 B）、§4.4.8 Phase 3 已定案。Phase 0–2 已合并；下一步：冻结并实现 OpenAPI v1.1。*

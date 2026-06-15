@@ -17,22 +17,40 @@ class TaskRunner:
         self._event_name: Optional[str] = None
         self._repeat_time = 1
 
-    @property
-    def status(self) -> str:
+    def _effective_status(self) -> str:
+        runner = self._runner
+        if runner is None:
+            return self._status
+        if runner.is_paused:
+            return 'paused'
+        if self._status == 'stopping':
+            return 'stopping'
+        if self._status in ('running', 'paused'):
+            return 'running'
         return self._status
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            return {
-                'status': self._status,
+            data: Dict[str, Any] = {
+                'status': self._effective_status(),
                 'event_name': self._event_name,
                 'repeat_time': self._repeat_time,
                 'error': self._error,
+                'route': None,
+                'pause_pending': False,
+                'current_event': None,
             }
+            runner = self._runner
+            if runner is not None:
+                data['route'] = runner.GetEventRoute()
+                data['pause_pending'] = runner.pause_pending
+                if len(runner.stack) > 0:
+                    data['current_event'] = runner.stack[-1].name
+            return data
 
     def start(self, event_name: str, repeat_time: int = 1) -> Dict[str, Any]:
         with self._lock:
-            if self._status == 'running':
+            if self._status in ('running', 'paused', 'stopping'):
                 raise RuntimeError('任务正在运行中')
             self._status = 'running'
             self._error = None
@@ -66,11 +84,30 @@ class TaskRunner:
         self._thread.start()
         return self.snapshot()
 
+    def pause(self) -> Dict[str, Any]:
+        with self._lock:
+            if self._status not in ('running', 'paused') or self._runner is None:
+                raise RuntimeError('任务未在运行')
+            self._runner.request_pause()
+            logger.info('任务暂停请求')
+        return self.snapshot()
+
+    def resume(self) -> Dict[str, Any]:
+        with self._lock:
+            if self._runner is None:
+                raise RuntimeError('任务未在运行')
+            if not self._runner.is_paused and not self._runner.pause_pending:
+                raise RuntimeError('任务未暂停')
+            self._runner.request_resume()
+            self._status = 'running'
+            logger.info('任务恢复')
+        return self.snapshot()
+
     def stop(self) -> Dict[str, Any]:
         with self._lock:
             if self._runner is not None:
                 self._runner.request_stop()
-            if self._status == 'running':
+            if self._status in ('running', 'paused'):
                 self._status = 'stopping'
             logger.info('任务停止请求')
         return self.snapshot()

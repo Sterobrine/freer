@@ -1,17 +1,29 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 import paths
 from config import get_config, load_config, save_config, FreerConfig
-from freer_api.models import ConfigUpdateRequest, TaskStartRequest
+from freer_api.models import (
+    ConfigUpdateRequest,
+    ExportRequest,
+    ImportRequest,
+    PreviewRequest,
+    TaskStartRequest,
+    ValidateRequest,
+)
 from freer_api.schemas import fail, ok
 from freer_api.store import ActionStore, EventStore
 from freer_api.task_runner import TaskRunner
+from freer_api.validate import validate_event, validate_events
+from freer_api.tree import build_event_tree
+from freer_api.preview import recognize_preview
+from freer_api.export_import import export_package, import_package
 from freer_log import get_broadcast_handler, get_logger, setup_logging
 
 logger = get_logger('freer.api')
@@ -72,7 +84,7 @@ async def lifespan(app: FastAPI):
     logger.info('freer_api 关闭')
 
 
-app = FastAPI(title='Freer API', version='0.3.0', lifespan=lifespan)
+app = FastAPI(title='Freer API', version='1.1.0', lifespan=lifespan)
 
 
 @app.exception_handler(Exception)
@@ -86,7 +98,7 @@ async def unhandled_exception_handler(request, exc):
 
 @app.get('/health')
 def health():
-    return ok({'status': 'ok', 'data_dir': str(paths.DATA_DIR)})
+    return ok({'status': 'ok', 'api_version': '1.1.0', 'data_dir': str(paths.DATA_DIR)})
 
 
 @app.get('/config')
@@ -209,9 +221,98 @@ def stop_task():
     return ok(task_runner.stop())
 
 
+@app.post('/task/pause')
+def pause_task():
+    try:
+        return ok(task_runner.pause())
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
+@app.post('/task/resume')
+def resume_task():
+    try:
+        return ok(task_runner.resume())
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
 @app.get('/task/status')
 def task_status():
     return ok(task_runner.snapshot())
+
+
+@app.get('/events/{name}/tree')
+def get_event_tree(name: str):
+    try:
+        return ok(build_event_tree(name))
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.post('/events/validate')
+def validate_events_route(body: ValidateRequest):
+    if body.events is not None:
+        return ok(validate_events(body.events, check_assets=body.check_assets))
+    return ok(validate_events(check_assets=body.check_assets))
+
+
+@app.post('/events/{name}/validate')
+def validate_single_event(name: str):
+    event = EventStore.get_by_name(name)
+    if event is None:
+        return JSONResponse(status_code=404, content=fail('not_found', f'未找到事件: {name}', 404))
+    return ok(validate_event(event))
+
+
+@app.post('/recognize/preview')
+def recognize_preview_route(body: PreviewRequest):
+    event_fields = body.model_dump(exclude={'symbol', 'accuracy', 'kind', 'use_capture'})
+    return ok(recognize_preview(
+        body.symbol,
+        accuracy=body.accuracy,
+        kind=body.kind,
+        event_fields=event_fields,
+        use_capture=body.use_capture,
+    ))
+
+
+@app.get('/assets/img/{asset_path:path}')
+def serve_asset(asset_path: str):
+    safe = Path(asset_path).name
+    if not safe or safe != Path(asset_path.replace('\\', '/')).name:
+        return JSONResponse(status_code=400, content=fail('invalid_path', '无效路径', 400))
+    target = (paths.IMG_DIR / safe).resolve()
+    try:
+        target.relative_to(paths.IMG_DIR.resolve())
+    except ValueError:
+        return JSONResponse(status_code=400, content=fail('invalid_path', '无效路径', 400))
+    if not target.is_file():
+        return JSONResponse(status_code=404, content=fail('not_found', f'未找到资源: {safe}', 404))
+    return FileResponse(target)
+
+
+@app.post('/export')
+def export_route(body: ExportRequest):
+    data = export_package(event_names=body.event_names, include_actions=body.include_actions)
+    return Response(
+        content=data,
+        media_type='application/zip',
+        headers={'Content-Disposition': 'attachment; filename=freer-export.zip'},
+    )
+
+
+@app.post('/import')
+async def import_route(
+    file: UploadFile = File(...),
+    mode: str = 'merge',
+):
+    try:
+        content = await file.read()
+        result = import_package(content, mode=mode)
+        return ok(result)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content=fail('invalid_package', str(exc), 400))
 
 
 @app.post('/shutdown')
