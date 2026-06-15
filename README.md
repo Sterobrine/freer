@@ -89,17 +89,14 @@ freer/
 ├── Control.py           # 核心引擎：事件树构建、调度、动作执行、数据管理
 ├── Models.py            # 数据模型：Event / GrandEvent / MicroEvent / Action
 ├── Tools.py             # 工具层：窗口查找、图像识别、文件读写、随机化
+├── recognition/         # 多 Matcher 识别路由
+├── freer_api/           # FastAPI sidecar（事件/动作/任务/日志）
+├── gui/                 # Tauri + React 前端
 ├── data/
-│   ├── event.json       # 事件定义（需通过 GUI 或手动创建）
+│   ├── event.json       # 事件定义
 │   ├── action.json      # 动作定义
 │   └── count.json       # 自增 ID 计数器
-└── View/
-    ├── AddEvent.py      # 添加事件 GUI
-    ├── EditEvent.py     # 编辑/删除事件 GUI
-    ├── AddEventUI.py    # 添加事件界面（Qt 生成）
-    ├── EditEventUI.py   # 编辑事件界面（Qt 生成）
-    ├── add_action.py    # 脚本：添加动作示例
-    └── del_event.py     # 脚本：删除事件示例
+└── config.yaml          # 运行配置
 ```
 
 ---
@@ -109,11 +106,11 @@ freer/
 - **操作系统**：Windows（依赖 Win32 API）
 - **Python 3**
 - **Android 模拟器**：已配置 ADB，默认设备 ID 为 `emulator-5554`（雷电模拟器）
-- **主要依赖**：
-  - `PySide2` — GUI
-  - `pywin32` — 窗口与消息操作
-  - `opencv-python`（cv2）
-  - `numpy`
+- **主要依赖**（见 `requirements.txt`）：
+  - `opencv-python`、`numpy` — 图像识别
+  - `fastapi`、`uvicorn` — HTTP API sidecar
+  - `pywin32` — Windows 窗口与消息操作
+- **前端**：Node 18+、pnpm（见 `gui/package.json`）
 
 ---
 
@@ -125,16 +122,14 @@ freer/
 
 ### 2. 配置动作与事件
 
-**方式 A — GUI（推荐）**
+**方式 A — Web GUI（推荐）**
 
 ```bash
-# 在 View 目录下运行
-cd View
-python AddEvent.py    # 添加事件
-python EditEvent.py   # 编辑或删除事件
+pnpm install
+pnpm start            # 启动 freer_api + 前端 http://localhost:5173
 ```
 
-**方式 B — 脚本**
+**方式 B — 脚本 / API**
 
 ```python
 import Control
@@ -211,23 +206,56 @@ python main.py
 
 ## GUI 使用说明
 
-### 添加事件（AddEvent.py）
-
-1. 选择事件类型：微事件 / 宏事件 / 异常-微事件 / 异常-宏事件
-2. 填写事件名、窗口名、识别精度、最大连续执行次数
-3. **微事件**：选择动作、配置起始/结束特征图或默认坐标、设置间隔
-4. **宏事件**：添加子事件（可设最少/最多执行次数）与异常事件，设置最大空转次数
-5. 点击「添加事件」写入 `data/event.json`
+启动 `pnpm start` 后，在浏览器打开 `http://localhost:5173`。界面包含：**事件库**、**动作**、**任务**、**模板/ROI**、**设置**。事件与动作经 `freer_api` 读写 `data/event.json` / `data/action.json`。
 
 默认窗口名为 `雷电模拟器|TheRender`。
 
-### 编辑事件（EditEvent.py）
+### 事件库
 
-1. 按类型筛选并选择已有事件
-2. 修改字段后点击「更新事件」
-3. 可删除当前选中的事件
+事件库用于浏览、编排与编辑全部事件，支持**列表**与**画布**两种视图（左下角切换）。
 
-特征图默认从项目上级目录的 `img/` 文件夹选取（`.bmp` 格式）。
+#### 列表模式（经典三栏）
+
+三栏均可拖拽分隔条调节宽度（宽度保存在浏览器 `localStorage`）：
+
+```
+┌─────────────┬──────────────────────┬─────────────────┐
+│ 事件目录     │  编排树（当前宏事件）   │  属性面板        │
+│ 搜索 / 新建  │  子事件 / 异常分支     │  字段编辑 / 保存  │
+│ 列表 / 画布  │  DnD 排序 / 嵌套展开   │                 │
+└─────────────┴──────────────────────┴─────────────────┘
+```
+
+| 栏 | 默认宽度 | 可调范围 | 说明 |
+|----|----------|----------|------|
+| 事件目录 | 224px | 160–420px | 搜索、新建宏/微事件、切换视图 |
+| 编排树 | 352px | 220–640px | 仅宏事件；管理 `event_list` / `exception_list` |
+| 属性面板 | 剩余空间 | 最小 280px | 编辑当前事件字段；支持面包屑深入子事件 |
+
+**编排树交互**：
+
+- 点击**事件名** → 深入编辑该子事件（面包屑导航）
+- 点击**标题栏其他区域** → 编辑子事件的编排参数（`should_run_time` / `max_run_time` / `priority`）
+- 拖拽排序子事件；下拉添加子事件或异常分支
+
+#### 画布模式（树形可视化）
+
+右侧两栏合并为一块可缩放、可平移的树形画布（类似工作流编辑器）：
+
+- **滚轮**缩放，**拖拽空白区域**平移；左上角工具栏可放大 / 缩小 / 适应视图
+- **单击节点** → 右侧滑出属性面板，直接编辑该节点对应的事件（**不会跳转或切换画布根**）
+- 宏事件为蓝色节点，微事件为绿色，异常分支为琥珀色虚线连接
+- 选中宏事件后进入画布；微事件显示单节点预览 + 底部属性区
+- 保存 / 删除作用于右栏当前选中的节点；编辑子节点不会影响左侧选中的根宏
+
+#### 其他页面
+
+| 页面 | 功能 |
+|------|------|
+| 动作 | 动作 CRUD |
+| 任务 | 选择根宏事件、循环次数、启动/停止、WebSocket 日志 |
+| 模板/ROI | ADB 截屏、拖拽选 ROI、模板预览 |
+| 设置 | `config.yaml`、数据目录、ADB 设备等 |
 
 ---
 
@@ -253,7 +281,7 @@ python main.py
 2. **ADB 设备**：默认 `emulator-5554`，可在 `config.yaml` 或环境变量 `FREER_ADB_DEVICE` 中修改。
 3. **子事件冲突**：相同 `symbol_start` 时可通过子事件 `priority` 字段区分（高优先级优先）。
 4. **右键单击**：`action_type = 2` 尚未实现。
-5. **GUI**：旧版 PySide2 界面仍可用；Phase 3 将交付 Tauri/React 新界面。
+5. **GUI**：Tauri + React（`gui/`）；事件库支持列表三栏与画布树形两种模式；桌面打包见 `UPGRADE_PLAN.md` §4.4.8.5。
 
 ---
 
@@ -341,9 +369,8 @@ OpenAPI 文档：启动后访问 `http://127.0.0.1:17890/docs`
 
 ## 开发说明
 
-- **Control.DataManager**：提供事件/动作的增删改查，GUI 与脚本共用
-- **View/addwidget.py**、**View/LoadByUI.py**：Qt 布局实验代码，非正式功能入口
-- IDE 配置位于 `.idea/`，项目模块名为 `Freer V0.1`
+- **Control.DataManager**：提供事件/动作的增删改查，API 与脚本共用
+- 开发启动：`pnpm start`（Web）或 `pnpm start:tauri`（桌面壳）
 
 ---
 

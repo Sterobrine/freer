@@ -6,9 +6,13 @@
  *   node scripts/start.mjs          # Web 模式
  *   node scripts/start.mjs tauri    # Tauri 模式
  *   pnpm start
+ *
+ * Python 默认使用 Miniconda/Anaconda 环境 freer（可通过 FREER_CONDA_ENV 改名）。
+ * 设置 FREER_ALLOW_SYSTEM_PYTHON=1 可回退到系统 Python。
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +22,14 @@ const MODE = process.argv[2] || 'web';
 const API_HOST = process.env.FREER_API_HOST || '127.0.0.1';
 const API_PORT = process.env.FREER_API_PORT || '17890';
 const HEALTH_URL = `http://${API_HOST}:${API_PORT}/health`;
+const CONDA_ENV = process.env.FREER_CONDA_ENV || 'freer';
+const ALLOW_SYSTEM_PYTHON = process.env.FREER_ALLOW_SYSTEM_PYTHON === '1';
 
 const IS_WIN = process.platform === 'win32';
+
+function shouldUseShell(cmd) {
+  return IS_WIN && !path.isAbsolute(cmd);
+}
 
 function log(msg) {
   console.log(msg);
@@ -55,26 +65,110 @@ function commandExists(cmd, args = ['--version']) {
   });
 }
 
-async function resolvePython() {
+function condaRoots() {
+  const roots = new Set();
+  const add = (value) => {
+    if (value) roots.add(path.normalize(value));
+  };
+
+  add(process.env.FREER_CONDA_ROOT);
+  if (process.env.CONDA_EXE) {
+    add(path.dirname(path.dirname(process.env.CONDA_EXE)));
+  }
+
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (home) {
+    for (const dir of ['miniconda3', 'Miniconda3', 'anaconda3', 'Anaconda3', 'miniforge3', 'Miniforge3']) {
+      add(path.join(home, dir));
+    }
+  }
+
+  return [...roots];
+}
+
+function condaEnvPythonExe(envName) {
+  const prefix = process.env.CONDA_PREFIX;
+  if (prefix && path.basename(prefix) === envName) {
+    const active = IS_WIN ? path.join(prefix, 'python.exe') : path.join(prefix, 'bin', 'python');
+    if (fs.existsSync(active)) return active;
+  }
+
+  for (const root of condaRoots()) {
+    const exe = IS_WIN
+      ? path.join(root, 'envs', envName, 'python.exe')
+      : path.join(root, 'envs', envName, 'bin', 'python');
+    if (fs.existsSync(exe)) return exe;
+  }
+
+  return null;
+}
+
+async function resolveCondaPython(envName) {
+  const direct = condaEnvPythonExe(envName);
+  if (direct) {
+    return { cmd: direct, args: [], label: `conda:${envName}` };
+  }
+
+  if (!(await commandExists('conda', ['--version']))) {
+    return null;
+  }
+
+  const result = spawnSync(
+    'conda',
+    ['run', '-n', envName, 'python', '-c', 'import sys; print(sys.executable)'],
+    { cwd: ROOT, encoding: 'utf8', shell: IS_WIN },
+  );
+  if (result.status !== 0) return null;
+
+  const lines = (result.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+  const resolved = lines.at(-1);
+  if (resolved && fs.existsSync(resolved)) {
+    return { cmd: resolved, args: [], label: `conda:${envName}` };
+  }
+
+  return null;
+}
+
+async function resolveSystemPython() {
   if (IS_WIN) {
-    if (await commandExists('py', ['-3', '--version'])) return { cmd: 'py', args: ['-3'] };
-    if (await commandExists('python', ['--version'])) return { cmd: 'python', args: [] };
+    if (await commandExists('py', ['-3', '--version'])) {
+      return { cmd: 'py', args: ['-3'], label: 'py -3' };
+    }
+    if (await commandExists('python', ['--version'])) {
+      return { cmd: 'python', args: [], label: 'python' };
+    }
   } else {
-    if (await commandExists('python3', ['--version'])) return { cmd: 'python3', args: [] };
-    if (await commandExists('python', ['--version'])) return { cmd: 'python', args: [] };
+    if (await commandExists('python3', ['--version'])) {
+      return { cmd: 'python3', args: [], label: 'python3' };
+    }
+    if (await commandExists('python', ['--version'])) {
+      return { cmd: 'python', args: [], label: 'python' };
+    }
   }
   return null;
 }
 
+async function resolvePython() {
+  if (process.env.FREER_PYTHON) {
+    return { cmd: process.env.FREER_PYTHON, args: [], label: 'FREER_PYTHON' };
+  }
+
+  const condaPython = await resolveCondaPython(CONDA_ENV);
+  if (condaPython) return condaPython;
+
+  if (ALLOW_SYSTEM_PYTHON) {
+    return resolveSystemPython();
+  }
+
+  return null;
+}
+
 function checkPythonDeps(python) {
-  const script = [
-    'import fastapi, uvicorn, yaml',
-    'print("ok")',
-  ].join('; ');
+  const script = 'import fastapi, uvicorn, yaml; print("ok")';
   const result = spawnSync(python.cmd, [...python.args, '-c', script], {
     cwd: ROOT,
     encoding: 'utf8',
-    shell: IS_WIN,
+    shell: shouldUseShell(python.cmd),
   });
   if (result.status === 0) return null;
   const err = (result.stderr || result.stdout || '').trim();
@@ -85,7 +179,7 @@ function spawnProc(cmd, args, opts = {}) {
   return spawn(cmd, args, {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: IS_WIN,
+    shell: shouldUseShell(cmd),
     ...opts,
   });
 }
@@ -97,7 +191,7 @@ function spawnDetachedApi(python) {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: !IS_WIN,
     windowsHide: true,
-    shell: IS_WIN,
+    shell: shouldUseShell(python.cmd),
   });
   if (!IS_WIN) {
     child.unref();
@@ -163,15 +257,23 @@ async function main() {
 
   const python = await resolvePython();
   if (!python) {
-    logErr('错误：未找到 Python（Windows: py -3 / python；macOS/Linux: python3）');
+    logErr(`错误：未找到 conda 环境 "${CONDA_ENV}"`);
+    logErr('请先创建环境并安装依赖：');
+    logErr(`  conda create -n ${CONDA_ENV} python=3.11 -y`);
+    logErr(`  conda activate ${CONDA_ENV}`);
+    logErr('  pip install -r requirements.txt');
+    logErr('若 conda 安装在非默认路径，可设置 FREER_CONDA_ROOT');
+    logErr('临时使用系统 Python 可设置 FREER_ALLOW_SYSTEM_PYTHON=1');
     process.exit(1);
   }
+
+  log(`使用 Python (${python.label}): ${python.cmd}`);
 
   const depErr = checkPythonDeps(python);
   if (depErr) {
     logErr('错误：Python 依赖缺失');
     logErr(depErr);
-    logErr('请先执行: pip install -r requirements.txt');
+    logErr(`请在 conda 环境中安装: conda activate ${CONDA_ENV} && pip install -r requirements.txt`);
     process.exit(1);
   }
 

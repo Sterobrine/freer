@@ -132,7 +132,7 @@ export function SettingsPage() {
             />
           </div>
           <div>
-            <label className="label">last_known TTL 帧</label>
+            <label className="label">上次位置记忆时长（帧）</label>
             <input
               className="input"
               type="number"

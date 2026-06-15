@@ -1,10 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Save, Search, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowLeft,
+  ChevronRight,
+  GitBranch,
+  LayoutList,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
-import type { FreerEvent } from '../api/types';
-import { CompositionEditor } from '../components/events/CompositionEditor';
+import type { FreerEvent, OpenEventContext } from '../api/types';
+import { CompositionTreeView } from '../components/events/CompositionTreeView';
+import { EventGraphEditor, EventGraphSingleNode } from '../components/events/EventGraphEditor';
 import { EventPropertyForm } from '../components/events/EventPropertyForm';
+import { ColumnResizeHandle, useResizableWidth } from '../components/ColumnResizeHandle';
+import { EVENT_DRAG_MIME } from '../lib/eventComposition';
+
+type ViewMode = 'classic' | 'graph';
+
+type NavFrame = {
+  name: string;
+  childIndex: number | null;
+  exceptionIndex: number | null;
+  draft: FreerEvent;
+};
+
+type SavePayload = FreerEvent | { event: FreerEvent; originalName: string };
+
+function resolveSavePayload(payload: SavePayload): { event: FreerEvent; originalName: string | null } {
+  if (typeof payload === 'object' && payload !== null && 'originalName' in payload) {
+    return { event: payload.event, originalName: payload.originalName };
+  }
+  return { event: payload, originalName: null };
+}
 
 function emptyMicro(): FreerEvent {
   return {
@@ -42,8 +72,76 @@ export function EventsPage() {
   const [draft, setDraft] = useState<FreerEvent | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [childIndex, setChildIndex] = useState<number | null>(null);
+  const [exceptionIndex, setExceptionIndex] = useState<number | null>(null);
   const [status, setStatus] = useState('');
+  const [navStack, setNavStack] = useState<NavFrame[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('classic');
+  const restoreRef = useRef<NavFrame | null>(null);
+  const [sidebarWidth, resizeSidebar] = useResizableWidth('freer.events.sidebarWidth', 224, 160, 420);
+  const [composeWidth, resizeCompose] = useResizableWidth('freer.events.composeWidth', 352, 220, 640);
 
+  const resetNavigation = () => setNavStack([]);
+
+  const navigateToEvent = (name: string, context?: OpenEventContext) => {
+    if (isNew || !selectedName || selectedName === name) {
+      setSelectedName(name);
+      setIsNew(false);
+      setChildIndex(null);
+      setExceptionIndex(null);
+      setStatus('');
+      return;
+    }
+    if (draft) {
+      setNavStack((stack) => [
+        ...stack,
+        {
+          name: selectedName,
+          childIndex: context?.childIndex !== undefined ? context.childIndex : childIndex,
+          exceptionIndex:
+            context?.exceptionIndex !== undefined ? context.exceptionIndex : exceptionIndex,
+          draft: { ...draft },
+        },
+      ]);
+    }
+    setSelectedName(name);
+    setIsNew(false);
+    setChildIndex(null);
+    setExceptionIndex(null);
+    setStatus('');
+  };
+
+  const goBack = () => {
+    if (navStack.length === 0) return;
+    const frame = navStack[navStack.length - 1];
+    restoreRef.current = frame;
+    setNavStack(navStack.slice(0, -1));
+    setSelectedName(frame.name);
+    setIsNew(false);
+    setChildIndex(frame.childIndex);
+    setExceptionIndex(frame.exceptionIndex);
+    setStatus('');
+  };
+
+  const goToBreadcrumb = (index: number) => {
+    if (index < 0 || index >= navStack.length) return;
+    const frame = navStack[index];
+    restoreRef.current = frame;
+    setNavStack(navStack.slice(0, index));
+    setSelectedName(frame.name);
+    setIsNew(false);
+    setChildIndex(frame.childIndex);
+    setExceptionIndex(frame.exceptionIndex);
+    setStatus('');
+  };
+
+  const selectFromSidebar = (name: string) => {
+    resetNavigation();
+    setSelectedName(name);
+    setIsNew(false);
+    setChildIndex(null);
+    setExceptionIndex(null);
+    setStatus('');
+  };
   const actionNames = useMemo(() => actions.map((a) => a.name), [actions]);
 
   const filtered = useMemo(
@@ -56,25 +154,46 @@ export function EventsPage() {
       setDraft(null);
       return;
     }
+    const pending = restoreRef.current;
+    if (pending?.name === selectedName) {
+      restoreRef.current = null;
+      setDraft({ ...pending.draft });
+      setChildIndex(pending.childIndex);
+      setExceptionIndex(pending.exceptionIndex);
+      return;
+    }
     const found = events.find((e) => e.name === selectedName);
     if (found && !isNew) setDraft({ ...found });
   }, [selectedName, events, isNew]);
-
   const save = useMutation({
-    mutationFn: async (event: FreerEvent) => {
+    mutationFn: async (payload: SavePayload) => {
+      const { event, originalName } = resolveSavePayload(payload);
       const validation = await api.validateEvents([event]);
       const item = validation.events.find((v) => v.name === event.name);
       if (item && !item.valid) {
         throw new Error(item.issues.map((i) => i.message).join('；'));
       }
-      if (isNew) return api.createEvent(event);
-      return api.updateEvent(selectedName!, event);
+      if (isNew && !selectedName) return api.createEvent(event);
+      return api.updateEvent(originalName ?? selectedName!, event);
     },
-    onSuccess: (saved) => {
+    onSuccess: (saved, payload) => {
       qc.invalidateQueries({ queryKey: ['events'] });
-      setSelectedName(saved.name);
-      setDraft(saved);
-      setIsNew(false);
+      const { originalName } = resolveSavePayload(payload);
+      const savedRoot = originalName === null || originalName === selectedName;
+
+      if (savedRoot) {
+        const prevName = selectedName;
+        setSelectedName(saved.name);
+        setDraft(saved);
+        setIsNew(false);
+        if (prevName && prevName !== saved.name) {
+          setNavStack((stack) =>
+            stack.map((frame) =>
+              frame.name === prevName ? { ...frame, name: saved.name, draft: saved } : frame,
+            ),
+          );
+        }
+      }
       setStatus('已保存');
     },
     onError: (e: Error) => setStatus(e.message),
@@ -82,10 +201,13 @@ export function EventsPage() {
 
   const remove = useMutation({
     mutationFn: (name: string) => api.deleteEvent(name),
-    onSuccess: () => {
+    onSuccess: (_data, name) => {
       qc.invalidateQueries({ queryKey: ['events'] });
-      setSelectedName(null);
-      setDraft(null);
+      if (name === selectedName) {
+        resetNavigation();
+        setSelectedName(null);
+        setDraft(null);
+      }
       setStatus('已删除');
     },
     onError: (e: Error) => setStatus(e.message),
@@ -94,7 +216,10 @@ export function EventsPage() {
   return (
     <div className="flex h-[calc(100vh-57px)]">
       {/* 事件目录 */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-surface-border">
+      <aside
+        className="flex shrink-0 flex-col overflow-hidden"
+        style={{ width: sidebarWidth }}
+      >
         <div className="border-b border-surface-border p-3">
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#6b7280]" />
@@ -110,10 +235,12 @@ export function EventsPage() {
               type="button"
               className="btn flex-1 text-xs"
               onClick={() => {
+                resetNavigation();
                 setDraft(emptyMacro());
                 setIsNew(true);
                 setSelectedName(null);
                 setChildIndex(null);
+                setExceptionIndex(null);
               }}
             >
               <Plus className="h-3 w-3" />宏
@@ -122,10 +249,12 @@ export function EventsPage() {
               type="button"
               className="btn flex-1 text-xs"
               onClick={() => {
+                resetNavigation();
                 setDraft(emptyMicro());
                 setIsNew(true);
                 setSelectedName(null);
                 setChildIndex(null);
+                setExceptionIndex(null);
               }}
             >
               <Plus className="h-3 w-3" />微
@@ -137,15 +266,16 @@ export function EventsPage() {
             <li key={e.name}>
               <button
                 type="button"
+                draggable
+                onDragStart={(ev) => {
+                  ev.dataTransfer.setData(EVENT_DRAG_MIME, e.name);
+                  ev.dataTransfer.effectAllowed = 'copy';
+                }}
                 className={`w-full rounded-lg px-2 py-1.5 text-left ${
                   selectedName === e.name && !isNew ? 'bg-surface-raised' : 'hover:bg-surface-raised/50'
                 }`}
-                onClick={() => {
-                  setSelectedName(e.name);
-                  setIsNew(false);
-                  setChildIndex(null);
-                  setStatus('');
-                }}
+                onClick={() => selectFromSidebar(e.name)}
+                title="拖到编排区可添加为子事件/异常"
               >
                 <span className={e.is_exception ? 'text-amber-300' : ''}>{e.name}</span>
                 <span className="ml-1 text-xs text-[#6b7280]">{e.event_type === 0 ? '宏' : '微'}</span>
@@ -153,28 +283,134 @@ export function EventsPage() {
             </li>
           ))}
         </ul>
+        <div className="border-t border-surface-border p-2">
+          <div className="flex gap-1 rounded-lg bg-surface-raised/50 p-0.5">
+            <button
+              type="button"
+              className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition ${
+                viewMode === 'classic' ? 'bg-surface-raised text-[#e8eaed]' : 'text-[#6b7280] hover:text-[#e8eaed]'
+              }`}
+              onClick={() => setViewMode('classic')}
+              title="经典三栏"
+            >
+              <LayoutList className="h-3.5 w-3.5" />
+              列表
+            </button>
+            <button
+              type="button"
+              className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition ${
+                viewMode === 'graph' ? 'bg-surface-raised text-[#e8eaed]' : 'text-[#6b7280] hover:text-[#e8eaed]'
+              }`}
+              onClick={() => {
+                resetNavigation();
+                setViewMode('graph');
+              }}
+              title="树形画布"
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              画布
+            </button>
+          </div>
+        </div>
       </aside>
 
+      <ColumnResizeHandle onDelta={resizeSidebar} />
+
+      {viewMode === 'graph' ? (
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {!draft ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-[#6b7280]">
+              从左侧选择宏事件以打开树形画布
+            </div>
+          ) : draft.event_type === 0 ? (
+            <EventGraphEditor
+              macro={draft}
+              allEvents={events}
+              actions={actionNames}
+              onMacroChange={setDraft}
+              onSave={(event, originalName) => save.mutate({ event, originalName })}
+              onDelete={(name) => remove.mutate(name)}
+              savePending={save.isPending}
+              isNew={isNew}
+              status={status}
+            />
+          ) : (
+            <EventGraphSingleNode
+              event={draft}
+              actions={actionNames}
+              onChange={setDraft}
+              onSave={() => save.mutate(draft)}
+              onDelete={() => remove.mutate(draft.name)}
+              savePending={save.isPending}
+              isNew={isNew}
+              status={status}
+            />
+          )}
+        </section>
+      ) : (
+        <>
       {/* 编排树 */}
-      <section className="flex w-80 shrink-0 flex-col border-r border-surface-border p-4">
+      <section
+        className="flex shrink-0 flex-col overflow-hidden p-4"
+        style={{ width: composeWidth }}
+      >
         <h2 className="mb-3 text-sm font-semibold">编排</h2>
         {!draft ? (
           <p className="text-xs text-[#6b7280]">选择宏事件以编辑子事件与异常分支</p>
         ) : draft.event_type === 0 ? (
-          <CompositionEditor
+          <CompositionTreeView
             macro={draft}
             allEvents={events}
             onChange={setDraft}
             selectedChildIndex={childIndex}
-            onSelectChild={setChildIndex}
+            onSelectChild={(index) => {
+              setChildIndex(index);
+              if (index !== null) setExceptionIndex(null);
+            }}
+            selectedExceptionIndex={exceptionIndex}
+            onSelectException={(index) => {
+              setExceptionIndex(index);
+              if (index !== null) setChildIndex(null);
+            }}
+            onOpenEvent={navigateToEvent}
           />
         ) : (
           <p className="text-xs text-[#6b7280]">微事件无子编排，请在右侧编辑属性</p>
         )}
       </section>
 
+      <ColumnResizeHandle onDelta={resizeCompose} />
+
       {/* 属性面板 */}
-      <section className="flex flex-1 flex-col overflow-hidden">
+      <section className="flex min-w-[280px] flex-1 flex-col overflow-hidden">
+        {navStack.length > 0 && (
+          <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2">
+            <button type="button" className="btn shrink-0 text-xs" onClick={goBack}>
+              <ArrowLeft className="h-3.5 w-3.5" />
+              返回
+            </button>
+            <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-1 text-xs text-[#6b7280]">
+              {navStack.map((frame, i) => (
+                <span key={`${frame.name}-${i}`} className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="max-w-[8rem] truncate rounded px-1 hover:bg-surface-raised hover:text-[#e8eaed]"
+                    onClick={() => goToBreadcrumb(i)}
+                    title={frame.name}
+                  >
+                    {frame.name}
+                  </button>
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                </span>
+              ))}
+              {draft && (
+                <span className="truncate font-medium text-[#e8eaed]" title={draft.name}>
+                  {draft.name}
+                </span>
+              )}
+            </nav>
+          </div>
+        )}
         <div className="flex items-center justify-between border-b border-surface-border px-4 py-2">
           <span className="text-sm font-medium">{draft?.name ?? '未选择'}</span>
           <div className="flex gap-2">
@@ -204,6 +440,8 @@ export function EventsPage() {
           )}
         </div>
       </section>
+        </>
+      )}
     </div>
   );
 }

@@ -2,7 +2,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Camera, Scan } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
-import { formatRoi, MATCH_TYPES, parseRoi } from '../lib/schemas';
+import { MATCH_TYPE_LABELS, SYMBOL_FIELD_LABELS } from '../lib/fieldLabels';
+import { formatRoi, parseRoi } from '../lib/schemas';
 
 type Rect = { x1: number; y1: number; x2: number; y2: number };
 
@@ -98,14 +99,16 @@ export function TemplateLabPage() {
         </div>
 
         <div>
-          <label className="label">match_type</label>
+          <label className="label">{SYMBOL_FIELD_LABELS.match_type}</label>
           <select className="input" value={matchType} onChange={(e) => setMatchType(e.target.value)}>
-            {MATCH_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {Object.entries(MATCH_TYPE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
           </select>
         </div>
 
         <div>
-          <label className="label">ROI (拖拽选框或手填)</label>
+          <label className="label">{SYMBOL_FIELD_LABELS.roi}（可拖拽选框）</label>
           <input className="input text-xs" value={roiText} onChange={(e) => setRoiText(e.target.value)} />
         </div>
 

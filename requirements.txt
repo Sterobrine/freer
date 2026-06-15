@@ -1,13 +1,20 @@
-# Freer core dependencies (Python 3.10+)
+# Freer core dependencies (Python 3.10–3.12)
+#
+# Covers: automation engine (Control/Tools/recognition) + freer_api sidecar.
+# Primary GUI: Tauri + React (gui/, package.json) — not Python Qt.
+#
+# Optional recognition matchers: requirements-optional.txt
+# Windows sidecar packaging: requirements-dev.txt
+
 numpy>=1.24.0
 opencv-python>=4.8.0
 pyyaml>=6.0
+
+# freer_api (OpenAPI v1.0 / v1.1)
 fastapi>=0.110.0
-uvicorn>=0.27.0
+uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
-httpx>=0.27.0
 python-multipart>=0.0.9
 
-# Windows-only engine dependencies
+# Windows engine: Win32 window/message ops (Tools.py); API-only dev may omit on Linux
 pywin32>=306; sys_platform == "win32"
-PySide2>=5.15.0; sys_platform == "win32"

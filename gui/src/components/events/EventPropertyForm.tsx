@@ -1,5 +1,10 @@
 import type { FreerEvent } from '../../api/types';
-import { formatRoi, MATCH_TYPES, parseRoi } from '../../lib/schemas';
+import {
+  LAST_RESORT_LABELS,
+  MATCH_TYPE_LABELS,
+  SYMBOL_FIELD_LABELS,
+} from '../../lib/fieldLabels';
+import { formatRoi, parseRoi } from '../../lib/schemas';
 
 type Props = {
   event: FreerEvent;
@@ -145,7 +150,7 @@ function SymbolFields({
     <fieldset className="space-y-2 rounded-lg border border-surface-border p-3">
       <legend className="px-1 text-xs font-medium text-[#9aa3b2]">{label}</legend>
       <div>
-        <label className="label">目标 (路径/文字)</label>
+        <label className="label">{SYMBOL_FIELD_LABELS.target}</label>
         <input
           className="input"
           value={symbolStr}
@@ -154,19 +159,19 @@ function SymbolFields({
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="label">match_type</label>
+          <label className="label">{SYMBOL_FIELD_LABELS.match_type}</label>
           <select
             className="input"
             value={event[typeKey] ?? 'template'}
             onChange={(e) => onChange({ ...event, [typeKey]: e.target.value })}
           >
-            {MATCH_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
+            {Object.entries(MATCH_TYPE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="label">accuracy</label>
+          <label className="label">{SYMBOL_FIELD_LABELS.accuracy}</label>
           <input
             className="input"
             type="number"
@@ -177,31 +182,32 @@ function SymbolFields({
         </div>
       </div>
       <div>
-        <label className="label">ROI (x1,y1,x2,y2)</label>
+        <label className="label">{SYMBOL_FIELD_LABELS.roi}</label>
         <input
           className="input"
-          placeholder="200, 800, 880, 1200"
+          placeholder={SYMBOL_FIELD_LABELS.roiPlaceholder}
           value={formatRoi(event[roiKey])}
           onChange={(e) => onChange({ ...event, [roiKey]: parseRoi(e.target.value) })}
         />
       </div>
       <div>
-        <label className="label">fallback 链 (| 分隔)</label>
+        <label className="label">{SYMBOL_FIELD_LABELS.fallback}</label>
         <input
           className="input"
+          placeholder={SYMBOL_FIELD_LABELS.fallbackPlaceholder}
           value={event[fbKey] ?? ''}
           onChange={(e) => onChange({ ...event, [fbKey]: e.target.value })}
         />
       </div>
       <div>
-        <label className="label">last_resort</label>
+        <label className="label">{SYMBOL_FIELD_LABELS.last_resort}</label>
         <select
           className="input"
           value={event[lrKey] ?? 'none'}
           onChange={(e) => onChange({ ...event, [lrKey]: e.target.value })}
         >
-          {['none', 'default_position', 'last_known', 'expand_roi', 'pause'].map((v) => (
-            <option key={v} value={v}>{v}</option>
+          {Object.entries(LAST_RESORT_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
           ))}
         </select>
       </div>

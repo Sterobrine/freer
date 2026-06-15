@@ -1,0 +1,7 @@
+# Development & packaging (UPGRADE_PLAN §4.4.8.5)
+#
+#   pip install -r requirements-dev.txt
+#   bash scripts/build-engine.sh
+
+-r requirements.txt
+pyinstaller>=6.0

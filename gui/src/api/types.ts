@@ -4,6 +4,11 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiError };
 
+export type OpenEventContext = {
+  childIndex?: number | null;
+  exceptionIndex?: number | null;
+};
+
 export type ChildEntry = {
   event: string;
   should_run_time: number;

@@ -1,5 +1,8 @@
-# Optional recognition dependencies (Phase 1.5+)
-# Install as needed: pip install -r requirements-optional.txt
+# Optional recognition matchers (Phase 1.5+, UPGRADE_PLAN §4.3.8)
+#
+# Lazy-loaded at runtime; missing packages skip the matcher with a warning.
+# Install when using match_type=ocr or match_type=ui:
+#   pip install -r requirements-optional.txt
 
 paddleocr>=2.7.0
 uiautomator2>=2.16.0
