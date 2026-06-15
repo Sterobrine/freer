@@ -22,7 +22,6 @@ from freer_api.store import ActionStore, EventStore
 from freer_api.task_runner import TaskRunner
 from freer_api.validate import validate_event, validate_events
 from freer_api.tree import build_event_tree
-from freer_api.preview import recognize_preview
 from freer_api.export_import import export_package, import_package
 from freer_log import get_broadcast_handler, get_logger, setup_logging
 
@@ -287,6 +286,8 @@ def validate_single_event(name: str):
 
 @app.post('/recognize/preview')
 def recognize_preview_route(body: PreviewRequest):
+    from freer_api.preview import recognize_preview
+
     event_fields = body.model_dump(exclude={'symbol', 'accuracy', 'kind', 'use_capture'})
     return ok(recognize_preview(
         body.symbol,

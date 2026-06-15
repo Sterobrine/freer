@@ -46,3 +46,30 @@ class AdbClient:
             raise AdbError(
                 f'ADB 输入失败 (device={self.device_id}, code={result.returncode}): {stderr}'
             )
+
+    def tap(self, x: int, y: int) -> None:
+        result = subprocess.run(
+            self._base_cmd() + ['shell', 'input', 'tap', str(int(x)), str(int(y))],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode('utf-8', errors='replace').strip()
+            raise AdbError(
+                f'ADB 点击失败 (device={self.device_id}, code={result.returncode}): {stderr}'
+            )
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
+        result = subprocess.run(
+            self._base_cmd() + [
+                'shell', 'input', 'swipe',
+                str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)), str(int(duration_ms)),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode('utf-8', errors='replace').strip()
+            raise AdbError(
+                f'ADB 滑动失败 (device={self.device_id}, code={result.returncode}): {stderr}'
+            )

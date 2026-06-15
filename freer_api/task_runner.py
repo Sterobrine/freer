@@ -1,7 +1,6 @@
 import threading
 from typing import Any, Dict, Optional
 
-import Control
 from freer_log import get_logger
 
 logger = get_logger('freer.task')
@@ -11,7 +10,7 @@ class TaskRunner:
     def __init__(self):
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
-        self._runner: Optional[Control.EventEx] = None
+        self._runner: Optional[Any] = None
         self._status = 'idle'
         self._error: Optional[str] = None
         self._event_name: Optional[str] = None
@@ -58,6 +57,8 @@ class TaskRunner:
             self._repeat_time = repeat_time
 
         def _run():
+            import Control
+
             try:
                 logger.info('任务启动: %s repeat=%s', event_name, repeat_time)
                 runner = Control.EventEx(event_name, repeat_time)

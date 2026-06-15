@@ -1,17 +1,19 @@
-import win32gui
-import win32api
-import win32con
 import os
-import win32ui
-import cv2
+import sys
 import random
 import json
-import numpy as np
 import time
 
 import paths
 from recognition.adb_client import AdbClient
 from recognition.types import AdbError
+
+_WIN32 = sys.platform == 'win32'
+if _WIN32:
+    import win32gui
+    import win32api
+    import win32con
+    import win32ui  # noqa: F401 — 保留供注释掉的 Win32 截屏代码引用
 
 
 class ScreenshotError(Exception):
@@ -25,6 +27,8 @@ _default_adb_client = AdbClient()
 class WindowTool:
     @staticmethod
     def IsWindowValid(hwnd) -> bool:
+        if not _WIN32:
+            return False
         if hwnd in (None, 0):
             return False
         try:
@@ -34,6 +38,8 @@ class WindowTool:
 
     @staticmethod
     def FindWindow(window_name):
+        if not _WIN32:
+            return 0
         return win32gui.FindWindow(None, window_name)
 
     @staticmethod
@@ -42,6 +48,8 @@ class WindowTool:
 
     @staticmethod
     def GetWindowSize(hwnd):
+        if not _WIN32:
+            return [0, 0]
         left, top, right, bot = win32gui.GetClientRect(hwnd)
         return [right, bot]
 
@@ -55,6 +63,8 @@ class WindowTool:
 
     @staticmethod
     def FindChildWindow(hwnd, name):
+        if not _WIN32:
+            return None
         window_list = [hwnd]
         while len(window_list) > 0:
             res = win32gui.EnumChildWindows(window_list[0], WindowTool.IsTargetWindow, [name, window_list])
@@ -65,25 +75,6 @@ class WindowTool:
 
 
 class ImageTool:
-    # @staticmethod
-    # def Capture(hwnd):
-    #     hwndDC = win32gui.GetWindowDC(hwnd)
-    #     mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-    #     saveDC = mfcDC.CreateCompatibleDC()
-    #     saveBitMap = win32ui.CreateBitmap()
-    #     rctA = win32gui.GetWindowRect(hwnd)
-    #     w = rctA[2] - rctA[0]
-    #     h = rctA[3] - rctA[1]
-    #     saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-    #     saveDC.SelectObject(saveBitMap)
-    #     saveDC.BitBlt((0, 0), (w, h), mfcDC, (0, 0), win32con.SRCCOPY)
-    #     signedIntsArray = saveBitMap.GetBitmapBits(True)
-    #     img = np.frombuffer(signedIntsArray, dtype="uint8")
-    #     img.shape = (h, w, 4)
-    #     win32gui.DeleteObject(saveBitMap.GetHandle())
-    #     mfcDC.DeleteDC()
-    #     saveDC.DeleteDC()
-    #     return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
     @staticmethod
     def Capture(adb_client=None):
         client = adb_client or _default_adb_client
@@ -97,6 +88,9 @@ class ImageTool:
 
     @staticmethod
     def FindImage(hwnd, target, accuracy):
+        import cv2
+        import numpy as np
+
         target = target.split('|')
         method = cv2.TM_CCOEFF_NORMED
         raw = cv2.imread(str(paths.SCREENSHOT_PATH))
@@ -119,6 +113,9 @@ class ImageTool:
 
     @staticmethod
     def GetImageSize(img_path):
+        import cv2
+        import numpy as np
+
         img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), -1)
         return [img.shape[1], img.shape[0]]
 
@@ -152,28 +149,34 @@ class FileTool:
 
 
 class ActionTool:
-    # @staticmethod
-    # def ADBClick(x, y):
     @staticmethod
     def doClick(x, y, hwnd):
-        long_position = y << 16 | x
-        win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
-        win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+        if _WIN32:
+            long_position = y << 16 | x
+            win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
+            win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+        else:
+            _default_adb_client.tap(x, y)
 
     @staticmethod
     def LeftDown(x, y, hwnd):
-        long_position = y << 16 | x
-        win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
+        if _WIN32:
+            long_position = y << 16 | x
+            win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
 
     @staticmethod
     def MoveTo(x, y, hwnd):
-        long_position = y << 16 | x
-        win32api.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, long_position)
+        if _WIN32:
+            long_position = y << 16 | x
+            win32api.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, long_position)
 
     @staticmethod
     def LeftUp(x, y, hwnd):
-        long_position = y << 16 | x
-        win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+        if _WIN32:
+            long_position = y << 16 | x
+            win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+        else:
+            _default_adb_client.tap(x, y)
 
     @staticmethod
     def InputCharacter(c):

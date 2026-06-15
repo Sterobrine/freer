@@ -8,10 +8,6 @@ from recognition.types import (
     SymbolSpec,
     TaskPausedError,
 )
-from recognition.router import MatcherRouter
-from recognition.frame import FrameContext
-from recognition.fallback import build_fallback_specs
-from recognition.last_known import LastKnownCache
 
 __all__ = [
     'FINISH_DEBOUNCE_FRAMES',
@@ -22,8 +18,4 @@ __all__ = [
     'Rect',
     'SymbolSpec',
     'TaskPausedError',
-    'MatcherRouter',
-    'FrameContext',
-    'build_fallback_specs',
-    'LastKnownCache',
 ]

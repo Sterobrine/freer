@@ -1,9 +1,8 @@
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-
-import cv2
-import numpy as np
+from typing import Any, Dict, List, Optional
 
 from recognition.adb_client import AdbClient
 from recognition.types import AdbError, Rect, TaskPausedError
@@ -18,14 +17,17 @@ _frame_counter = 0
 
 @dataclass
 class FrameContext:
-    image: np.ndarray
+    image: Any
     captured_at: float
     frame_id: int = 0
     match_cache: Dict[str, List[Rect]] = field(default_factory=dict)
     match_elapsed_ms: float = 0.0
 
     @classmethod
-    def capture(cls, adb_client: Optional[AdbClient] = None) -> 'FrameContext':
+    def capture(cls, adb_client: Optional[AdbClient] = None) -> FrameContext:
+        import cv2
+        import numpy as np
+
         global _frame_counter
         _frame_counter += 1
         client = adb_client or AdbClient()

@@ -1,10 +1,5 @@
 from typing import Any, Dict, List, Optional
 
-from recognition.adb_client import AdbClient
-from recognition.frame import FrameContext
-from recognition.parse import parse_symbol
-from recognition.router import MatcherRouter
-
 
 def _rect_to_dict(rect) -> Dict[str, Any]:
     return {
@@ -26,6 +21,11 @@ def recognize_preview(
     event_fields: Optional[Dict[str, Any]] = None,
     use_capture: bool = True,
 ) -> Dict[str, Any]:
+    from recognition.adb_client import AdbClient
+    from recognition.frame import FrameContext
+    from recognition.parse import parse_symbol
+    from recognition.router import MatcherRouter
+
     router = MatcherRouter()
     event_obj = _EventStub(event_fields or {})
     spec = parse_symbol(symbol, accuracy=accuracy, kind=kind, event=event_obj)

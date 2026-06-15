@@ -8,7 +8,7 @@
  *   pnpm start
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,6 +66,21 @@ async function resolvePython() {
   return null;
 }
 
+function checkPythonDeps(python) {
+  const script = [
+    'import fastapi, uvicorn, yaml',
+    'print("ok")',
+  ].join('; ');
+  const result = spawnSync(python.cmd, [...python.args, '-c', script], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    shell: IS_WIN,
+  });
+  if (result.status === 0) return null;
+  const err = (result.stderr || result.stdout || '').trim();
+  return err || 'Python 依赖未安装';
+}
+
 function spawnProc(cmd, args, opts = {}) {
   return spawn(cmd, args, {
     cwd: ROOT,
@@ -79,7 +94,7 @@ function spawnDetachedApi(python) {
   const args = [...python.args, '-m', 'freer_api'];
   const child = spawn(python.cmd, args, {
     cwd: ROOT,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     detached: !IS_WIN,
     windowsHide: true,
     shell: IS_WIN,
@@ -92,6 +107,14 @@ function spawnDetachedApi(python) {
 
 async function waitForApi(child) {
   let exited = false;
+  let stderr = '';
+  let stdout = '';
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+  child.stdout?.on('data', (chunk) => {
+    stdout += chunk.toString();
+  });
   child.on('exit', () => {
     exited = true;
   });
@@ -100,11 +123,17 @@ async function waitForApi(child) {
     if (await healthCheck()) return true;
     if (exited || child.exitCode !== null) {
       logErr('错误：freer_api 进程已退出，请检查依赖与日志');
+      const detail = (stderr || stdout).trim();
+      if (detail) {
+        logErr('--- freer_api 输出 ---');
+        logErr(detail);
+      }
       return false;
     }
     await sleep(250);
   }
   logErr(`错误：等待 freer_api 就绪超时 (${HEALTH_URL})`);
+  if (stderr.trim()) logErr(stderr.trim());
   return false;
 }
 
@@ -135,6 +164,14 @@ async function main() {
   const python = await resolvePython();
   if (!python) {
     logErr('错误：未找到 Python（Windows: py -3 / python；macOS/Linux: python3）');
+    process.exit(1);
+  }
+
+  const depErr = checkPythonDeps(python);
+  if (depErr) {
+    logErr('错误：Python 依赖缺失');
+    logErr(depErr);
+    logErr('请先执行: pip install -r requirements.txt');
     process.exit(1);
   }
 
