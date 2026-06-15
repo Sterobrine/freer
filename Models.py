@@ -1,9 +1,8 @@
 class Event:
-    run_time = 0
-    hwnd = None
-    id = None
-
     def __init__(self, name, window_name, symbol_start, symbol_finish, max_suc_run_time, accuracy, event_type, is_exception):
+        self.run_time = 0
+        self.hwnd = None
+        self.id = None
         self.accuracy = accuracy
         self.name = name
         self.symbol_start = symbol_start
@@ -19,20 +18,16 @@ class Event:
 
 
 class GrandEvent(Event):
-    event_list = None
-    exception_list = None
-    has_rotate_time = 0
-
     def __init__(self, name=None, window_name=None, symbol_start=None, symbol_finish=None, event_list=None, exception_list=None, accuracy=0.85, max_suc_run_time=5, max_rotate_time=5, is_exception=None):
         Event.__init__(self, name, window_name, symbol_start, symbol_finish, max_suc_run_time, accuracy, 0, is_exception)
-        self.event_list = event_list
-        self.exception_list = exception_list
+        self.event_list = event_list if event_list is not None else []
+        self.exception_list = exception_list if exception_list is not None else []
+        self.inactive_list = []
+        self.has_rotate_time = 0
         self.max_rotate_time = max_rotate_time
 
 
 class MicroEvent(Event):
-    action = None
-
     def __init__(self, name=None, window_name=None, action=None, symbol_start=None, symbol_finish=None, gap=None, accuracy=0.85, max_suc_run_time=5, default_position=None, is_exception=None):
         Event.__init__(self, name, window_name, symbol_start, symbol_finish, max_suc_run_time, accuracy, 1, is_exception)
         self.default_position = default_position
@@ -44,10 +39,9 @@ class MicroEvent(Event):
 
 
 class Action:
-    hwnd = None
-    id = None
-
     def __init__(self, name=None, action_type=None, run_time=None, wait_time=None, gap=None, duration=None, text=None):
+        self.hwnd = None
+        self.id = None
         self.name = name
         self.action_type = action_type
         self.run_time = run_time  # 动作重复进行次数

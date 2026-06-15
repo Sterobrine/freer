@@ -9,11 +9,29 @@ import json
 import numpy as np
 import time
 
+import paths
+from recognition.adb_client import AdbClient
+from recognition.types import AdbError
+
+
+class ScreenshotError(Exception):
+    """Raised when the screenshot file is missing or cannot be decoded."""
+
 
 count = 0
+_default_adb_client = AdbClient()
 
 
 class WindowTool:
+    @staticmethod
+    def IsWindowValid(hwnd) -> bool:
+        if hwnd in (None, 0):
+            return False
+        try:
+            return bool(win32gui.IsWindow(hwnd))
+        except Exception:
+            return False
+
     @staticmethod
     def FindWindow(window_name):
         return win32gui.FindWindow(None, window_name)
@@ -67,17 +85,26 @@ class ImageTool:
     #     saveDC.DeleteDC()
     #     return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
     @staticmethod
-    def Capture():
-        os.system('adb -s emulator-5554 exec-out screencap -p > sc.bmp')
+    def Capture(adb_client=None):
+        client = adb_client or _default_adb_client
+        try:
+            raw = client.screencap()
+        except AdbError as exc:
+            raise ScreenshotError(str(exc)) from exc
+        with open(paths.SCREENSHOT_PATH, 'wb') as f:
+            f.write(raw)
         time.sleep(0.01)
 
     @staticmethod
     def FindImage(hwnd, target, accuracy):
         target = target.split('|')
         method = cv2.TM_CCOEFF_NORMED
-        # img = ImageTool.Capture(hwnd)
-        # ImageTool.Capture()
-        img = cv2.cvtColor(cv2.imread('sc.bmp'), cv2.COLOR_RGBA2RGB)
+        raw = cv2.imread(str(paths.SCREENSHOT_PATH))
+        if raw is None:
+            raise ScreenshotError(
+                f'无法读取截图文件: {paths.SCREENSHOT_PATH}（请确认 ADB 截屏已成功）'
+            )
+        img = cv2.cvtColor(raw, cv2.COLOR_RGBA2RGB)
         pos = []
         for i in range(len(target)):
             template = cv2.imdecode(np.fromfile(target[i], dtype=np.uint8), -1)
@@ -150,7 +177,7 @@ class ActionTool:
 
     @staticmethod
     def InputCharacter(c):
-        os.system('adb -s emulator-5554 shell input text ' + c)
+        _default_adb_client.input_text(c)
 
 
 class RandomTool:

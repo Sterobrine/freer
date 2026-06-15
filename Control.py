@@ -3,6 +3,13 @@ import Models
 import time
 import copy
 
+import paths
+from recognition.adb_client import AdbClient
+from recognition.frame import FrameContext, ScreenshotError
+from recognition.parse import parse_symbol
+from recognition.router import MatcherRouter
+from recognition.types import FINISH_DEBOUNCE_FRAMES, TaskPausedError
+
 
 class ActionEx:
     @staticmethod
@@ -23,14 +30,13 @@ class ActionEx:
 
     @staticmethod
     def Drag(position, action, event_gap):
-        # print('(x1:' + str(x1) + ', y1:' + str(y1) + '),(x2:' + str(x2) + ', y2:' + str(y2) + ')')
         if len(position) == 0:
             print('未设置拖拽目标')
             return
         i = 0
-        while i < len(position):
+        while i + 1 < len(position):
             for j in range(action.run_time):
-                site = EventEx.GetRandomPosition([position[i], position[i+1]])
+                site = EventEx.GetRandomPosition([position[i], position[i + 1]])
                 if len(site[0]) == 0 or len(site[1]) == 0:
                     continue
                 x1 = site[0][0]
@@ -38,12 +44,22 @@ class ActionEx:
                 x2 = site[1][0]
                 y2 = site[1][1]
                 Tools.ActionTool.LeftDown(x1, y1, action.hwnd)
-                if x1 == x2:
+                if x1 == x2 and y1 == y2:
+                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
+                elif x1 == x2:
                     speed = action.duration / abs(y1 - y2)
                     step = -1 if y1 > y2 else 1
                     for y in range(y1, y2, step):
                         Tools.ActionTool.MoveTo(x1, y, action.hwnd)
                         time.sleep(speed)
+                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
+                elif y1 == y2:
+                    speed = action.duration / abs(x1 - x2)
+                    step = -1 if x1 > x2 else 1
+                    for x in range(x1, x2, step):
+                        Tools.ActionTool.MoveTo(x, y1, action.hwnd)
+                        time.sleep(speed)
+                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
                 else:
                     k = (y1 - y2) / (x1 - x2)
                     b = y1 - k * x1
@@ -53,9 +69,9 @@ class ActionEx:
                         y = int(k * x + b)
                         Tools.ActionTool.MoveTo(x, y, action.hwnd)
                         time.sleep(speed)
-                Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
+                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
                 time.sleep(Tools.RandomTool.getRandomGap(action.gap))
-                i += 2
+            i += 2
             time.sleep(Tools.RandomTool.getRandomGap(event_gap))
 
     @staticmethod
@@ -95,22 +111,24 @@ class ActionEx:
 
 
 class EventEx:
-    event_tree_template = None
-    event_info = None
-    action_info = None
-    stack = []
-    cursor = None
-    pre_cursor = None
-    # 连续执行次数
-    run_time = 0
-    # 任务重复参数
-    repeat_time = 1
-    has_repeat_time = 0
-    tmp_position = None
-
     def __init__(self, event_name, repeat_time=1):
-        self.event_name = event_name
+        self.event_tree_template = None
+        self.event_info = None
+        self.action_info = None
+        self.stack = []
+        self.cursor = None
+        self.pre_cursor = None
+        self.run_time = 0
         self.repeat_time = repeat_time
+        self.has_repeat_time = 0
+        self.tmp_position = None
+        self.event_name = event_name
+        self.router = MatcherRouter()
+        self.adb_client = AdbClient()
+        self.frame = None
+        self._hwnd_cache = {}
+        self._finish_streak = 0
+        self._finish_debounce_frames = FINISH_DEBOUNCE_FRAMES
         self.InitInfo()
         print('开始创建事件树')
         self.event_tree_template = self.InitEventTree(self.event_name)
@@ -118,9 +136,9 @@ class EventEx:
 
     def InitInfo(self):
         print('正在加载事件信息···')
-        self.event_info = Tools.FileTool.ReadJSON('./data/event.json')
+        self.event_info = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
         print('正在加载动作信息···')
-        self.action_info = Tools.FileTool.ReadJSON('./data/action.json')
+        self.action_info = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
 
     @staticmethod
     def FindInfo(info_list, name):
@@ -176,8 +194,15 @@ class EventEx:
             event.action = action
         return event
 
-    def GetPosition(self, target, mode='gdi'):
-        return Tools.ImageTool.FindImage(self.cursor.hwnd, target, self.cursor.accuracy)
+    def GetPosition(self, target, accuracy=None, *, kind='start'):
+        if target is None or target == '':
+            return []
+        if self.frame is None:
+            return []
+        acc = self.cursor.accuracy if accuracy is None else accuracy
+        spec = parse_symbol(target, accuracy=acc, kind=kind, event=self.cursor)
+        rects = self.router.resolve(self.frame, spec)
+        return self.router.to_legacy_positions(rects)
 
     @staticmethod
     def GetRandomPosition(position):
@@ -199,24 +224,25 @@ class EventEx:
         res += self.stack[len(self.stack) - 1].name
         return res
 
-    def EventIsFinish(self):
+    def _finish_condition_met(self):
         if self.cursor.symbol_finish is None:
             if self.cursor.event_type == 0:
                 for event in self.cursor.event_list:
                     if event['has_run_time'] < event['should_run_time']:
                         return False
                 return True
-            else:
-                target_pos = self.GetPosition(self.cursor.symbol_start)
-                print(self.cursor.name, target_pos)
-                self.tmp_position = target_pos
-                if len(target_pos) == 0:
-                    return True
+            target_pos = self.GetPosition(self.cursor.symbol_start, kind='start')
+            print(self.cursor.name, target_pos)
+            return len(target_pos) == 0
+        target_pos = self.GetPosition(self.cursor.symbol_finish, kind='finish')
+        return len(target_pos) > 0
+
+    def EventIsFinish(self):
+        if self._finish_condition_met():
+            self._finish_streak += 1
         else:
-            target_pos = self.GetPosition(self.cursor.symbol_finish)
-            if len(target_pos) > 0:
-                return True
-        return False
+            self._finish_streak = 0
+        return self._finish_streak >= self._finish_debounce_frames
 
     def EventIsCold(self, event):
         if self.pre_cursor is None:
@@ -231,19 +257,24 @@ class EventEx:
             return False
         if type(event_list[0]).__name__ == 'dict':
             print('正在查找子事件···')
+            ordered = sorted(event_list, key=lambda e: e.get('priority', 0), reverse=True)
             i = 0
-            while i < len(event_list):
-                print('正在查询子事件' + event_list[i]['event'].name + '的状态')
-                if self.EventIsCold(event_list[i]['event']):
+            while i < len(ordered):
+                child_entry = ordered[i]
+                if 'max_run_time' in child_entry and child_entry.get('has_run_time', 0) >= child_entry['max_run_time']:
+                    i += 1
+                    continue
+                print('正在查询子事件' + child_entry['event'].name + '的状态')
+                if self.EventIsCold(child_entry['event']):
                     print('该子事件正冷却中···')
                     i += 1
                     continue
-                if event_list[i]['event'].symbol_start is None or event_list[i]['event'].symbol_start == '':  # 如果找到了下一个事件
-                    self.stack.append(event_list[i]['event'])  # 事件入栈
+                if child_entry['event'].symbol_start is None or child_entry['event'].symbol_start == '':
+                    self.stack.append(child_entry['event'])
                     return True
-                self.tmp_position = self.GetPosition(event_list[i]['event'].symbol_start)
-                if len(self.GetPosition(event_list[i]['event'].symbol_start)) > 0:
-                    self.stack.append(event_list[i]['event'])  # 事件入栈
+                target_pos = self.GetPosition(child_entry['event'].symbol_start, kind='start')
+                if len(target_pos) > 0:
+                    self.stack.append(child_entry['event'])
                     return True
                 i += 1
                 time.sleep(0.05)
@@ -255,25 +286,36 @@ class EventEx:
                 if event_list[i].symbol_start is None or event_list[i].symbol_start == '':
                     self.stack.append(event_list[i])
                     return True
-                self.tmp_position = self.GetPosition(event_list[i].symbol_start)
-                if len(self.tmp_position) > 0:
+                target_pos = self.GetPosition(event_list[i].symbol_start, kind='start')
+                if len(target_pos) > 0:
                     self.stack.append(event_list[i])
                     return True
                 time.sleep(0.05)
         return False
 
     def GetWindowHwnd(self):
-        windows = self.cursor.window_name.split('|')
+        key = self.cursor.window_name
+        cached = self._hwnd_cache.get(key)
+        if Tools.WindowTool.IsWindowValid(cached):
+            self.cursor.hwnd = cached
+            if self.cursor.event_type == 1:
+                self.cursor.action.hwnd = cached
+            return
+
+        windows = key.split('|')
         parent = Tools.WindowTool.FindWindow(windows[0])
-        self.cursor.hwnd = parent
+        hwnd = parent
         if len(windows) > 1 and parent != 0:
-            self.cursor.hwnd = Tools.WindowTool.FindChildWindow(parent, windows[1])
-        if self.cursor.hwnd is None:
-            print('错误：未找到窗口"' + windows[1] + '"')
-        elif self.cursor.hwnd == 0:
-            print('错误：未找到窗口"' + windows[0] + '"')
-        elif self.cursor.event_type == 1:
-            self.cursor.action.hwnd = self.cursor.hwnd
+            hwnd = Tools.WindowTool.FindChildWindow(parent, windows[1])
+        if hwnd is None or hwnd == 0:
+            missing = windows[1] if hwnd is None and len(windows) > 1 else windows[0]
+            print('错误：未找到窗口"' + missing + '"，任务暂停')
+            raise TaskPausedError('未找到窗口: ' + key)
+
+        self._hwnd_cache[key] = hwnd
+        self.cursor.hwnd = hwnd
+        if self.cursor.event_type == 1:
+            self.cursor.action.hwnd = hwnd
 
     def CountAndClearRedundant(self):
         stack_len = len(self.stack)
@@ -284,11 +326,19 @@ class EventEx:
                 child = parent.event_list[i]
                 if child['event'].name == self.cursor.name:
                     child['has_run_time'] += 1
-                    # print(child['event'].name, child['max_run_time'], child['has_run_time'])
                     if child['has_run_time'] >= child['max_run_time']:
-                        for j in range(i+1):
-                            parent.inactive_list.append(parent.event_list[j])
-                        del parent.event_list[:i+1]
+                        if child['has_run_time'] < child['should_run_time']:
+                            print(
+                                '警告：子事件"' + child['event'].name + '"已达 max_run_time='
+                                + str(child['max_run_time']) + '，但未满足 should_run_time='
+                                + str(child['should_run_time']) + '，父宏事件不会提前完成'
+                            )
+                            if child not in parent.inactive_list:
+                                parent.inactive_list.append(child)
+                        else:
+                            for j in range(i + 1):
+                                parent.inactive_list.append(parent.event_list[j])
+                            del parent.event_list[:i + 1]
                     break
 
     def DoMicroEvent(self):
@@ -301,8 +351,7 @@ class EventEx:
                 i += 2
             position = tmp
         else:
-            # position = self.GetPosition(self.cursor.symbol_start)  # 如果默认点击位置不为空，通过特征图像识别寻找位置
-            position = self.tmp_position
+            position = self.GetPosition(self.cursor.symbol_start, kind='start')
         print(self.cursor.name, position)
         ActionEx.doAction(self.cursor.action, position, self.cursor.gap)
         print('微事件"' + self.cursor.name + '"已执行')
@@ -382,13 +431,24 @@ class EventEx:
 
     def EventDispatch(self):
         while len(self.stack) > 0:
-            Tools.ImageTool.Capture()
-            print('正在执行：' + self.GetEventRoute())  # 显示当前执行的事件层次位置
-            self.cursor = self.stack[-1]  # 执行指针总是指向栈顶
-            if self.ColdEventCape():  # 事件过热检测和冷处理
-                continue  # 如果过热，重新访问经冷处理后的栈
-            self.SuccessiveRunCount()  # 连续执行计数
-            self.GetWindowHwnd()  # 获取当前事件通窗口句柄
+            try:
+                self.frame = FrameContext.capture(self.adb_client)
+            except (TaskPausedError, ScreenshotError) as exc:
+                print('任务暂停: ' + str(exc))
+                self.stack.clear()
+                return
+
+            print('正在执行：' + self.GetEventRoute())
+            self.cursor = self.stack[-1]
+            if self.ColdEventCape():
+                continue
+            self.SuccessiveRunCount()
+            try:
+                self.GetWindowHwnd()
+            except TaskPausedError as exc:
+                print('任务暂停: ' + str(exc))
+                self.stack.clear()
+                return
             if self.EventIsFinish():  # 事件完成状态检测
                 print('事件"' + self.cursor.name + '"已完成')
                 self.CountAndClearRedundant()  # 完成次数计数，清除父事件的子事件队列中当前执行事件及之前的事件
@@ -409,6 +469,8 @@ class EventEx:
     def Reset(self):
         self.run_time = 0
         self.pre_cursor = None
+        self._finish_streak = 0
+        self.frame = None
         root = copy.deepcopy(self.event_tree_template)
         self.stack.append(root)
 
@@ -424,17 +486,17 @@ class DataManager:
     @staticmethod
     def ReadFile(obj_type):
         if obj_type == 0:
-            obj_list = Tools.FileTool.ReadJSON('../data/event.json')
+            obj_list = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
         else:
-            obj_list = Tools.FileTool.ReadJSON('../data/action.json')
+            obj_list = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
         return obj_list
 
     @staticmethod
     def WriteFile(obj_type, content):
         if obj_type == 0:
-            Tools.FileTool.WriteJSON('../data/event.json', content)
+            Tools.FileTool.WriteJSON(str(paths.EVENT_JSON), content)
         else:
-            Tools.FileTool.WriteJSON('../data/action.json', content)
+            Tools.FileTool.WriteJSON(str(paths.ACTION_JSON), content)
 
     @staticmethod
     def AddObj(obj, obj_type):

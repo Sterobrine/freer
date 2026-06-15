@@ -6,6 +6,7 @@ import Tools
 import Control
 import Models
 import os
+import paths
 
 
 class LoadGui(QMainWindow, Ui_MainWindow):
@@ -16,8 +17,8 @@ class LoadGui(QMainWindow, Ui_MainWindow):
 
 
 def LoadData(ui):
-    ui.event_data = Tools.FileTool.ReadJSON('../data/event.json')
-    ui.action_data = Tools.FileTool.ReadJSON('../data/action.json')
+    ui.event_data = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
+    ui.action_data = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
 
 
 def GetEventNameList(event_type):
