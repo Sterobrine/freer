@@ -10,8 +10,9 @@
     "tauri:build": "tauri build",
     "api:types": "pnpm --dir gui api:types",
     "package:engine": "bash scripts/build-engine.sh",
-    "start": "bash scripts/start.sh",
-    "start:tauri": "bash scripts/start.sh tauri"
+    "start": "node scripts/start.mjs",
+    "start:tauri": "node scripts/start.mjs tauri",
+    "start:win": "scripts\\start.cmd"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0"
