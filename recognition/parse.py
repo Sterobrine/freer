@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
 
+from recognition.fallback_parse import parse_fallback_chain
 from recognition.types import MATCH_TYPES, ROI_EXPAND_PX, SymbolSpec
 
 
@@ -36,9 +37,7 @@ def parse_symbol(
         flat_index = getattr(event, f'index_{kind}', None)
         flat_last_resort = getattr(event, f'last_resort_{kind}', None)
         if flat_type is not None:
-            fb = None
-            if flat_fallback:
-                fb = [s.strip() for s in str(flat_fallback).split('|') if s.strip()]
+            fb = parse_fallback_chain(flat_fallback)
             return SymbolSpec(
                 type=str(flat_type),
                 target=str(value) if value is not None else '',

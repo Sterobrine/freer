@@ -5,6 +5,7 @@ import copy
 import threading
 
 import paths
+from action_steps import get_action_steps, normalize_platform
 from recognition.adb_client import AdbClient
 from recognition.frame import FrameContext, ScreenshotError
 from recognition.parse import parse_symbol
@@ -15,83 +16,201 @@ from freer_log import get_logger
 logger = get_logger('freer.engine')
 
 
+class _PointerSession:
+    """Within one steps[] pass: reuse coordinates after pointer_down until pointer_up."""
+
+    __slots__ = ('active', 'x', 'y', 'button', 'pos_index')
+
+    def __init__(self):
+        self.active = False
+        self.x = None
+        self.y = None
+        self.button = 'left'
+        self.pos_index = None
+
+    def lock(self, x, y, button, pos_index):
+        self.active = True
+        self.x, self.y = x, y
+        self.button = button
+        self.pos_index = pos_index
+
+    def update(self, x, y, pos_index):
+        self.x, self.y = x, y
+        self.pos_index = pos_index
+
+    def clear(self):
+        self.active = False
+        self.x = self.y = None
+        self.pos_index = None
+        self.button = 'left'
+
+    def point_for(self, pos_index):
+        if self.active and self.x is not None and pos_index == self.pos_index:
+            return self.x, self.y
+        return None
+
+
 class ActionEx:
     @staticmethod
-    def LeftClick(position, action, event_gap):
+    def _resolve_point(position, pos_index):
+        if pos_index >= len(position):
+            return None
+        slot = position[pos_index]
+        if len(slot) < 5:
+            return None
+        work = [0, slot[1], slot[2], slot[3], slot[4]]
+        site = EventEx.GetRandomPosition([work])[0]
+        if len(site) == 0:
+            return None
+        return site[0], site[1]
+
+    @staticmethod
+    def _resolve_pointer_point(position, step, session, op):
+        pos_index = int(step.get('pos', 0))
+        if op == 'pointer_down':
+            pt = ActionEx._resolve_point(position, pos_index)
+            if pt is not None:
+                session.lock(pt[0], pt[1], step.get('button', 'left'), pos_index)
+            return pt
+        if op in ('pointer_move', 'pointer_up'):
+            cached = session.point_for(pos_index)
+            if cached is not None:
+                return cached
+            pt = ActionEx._resolve_point(position, pos_index)
+            if pt is not None and op == 'pointer_move':
+                session.update(pt[0], pt[1], pos_index)
+            return pt
+        return ActionEx._resolve_point(position, pos_index)
+
+    @staticmethod
+    def _resolve_gesture_points(position, step):
+        from_pos = int(step.get('from_pos', 0))
+        start = ActionEx._resolve_point(position, from_pos)
+        if start is None:
+            return None, None
+        offset = step.get('offset')
+        if offset is not None:
+            return start, (start[0] + int(offset[0]), start[1] + int(offset[1]))
+        to_pos = int(step.get('to_pos', from_pos + 1))
+        if to_pos == from_pos:
+            return start, start
+        end = ActionEx._resolve_point(position, to_pos)
+        if end is None:
+            return start, start
+        return start, end
+
+    @staticmethod
+    def _run_gesture(platform, hwnd, position, step):
         if len(position) == 0:
-            print('未设定左键单击目标')
+            print('未设置手势目标')
             return
-        for i in range(len(position)):
-            position[i][0] = 0
-            for j in range(action.run_time):
-                site = EventEx.GetRandomPosition([position[i]])[0]
-                if len(site) == 0:
-                    continue
-                Tools.ActionTool.doClick(site[0], site[1], action.hwnd)
-                time.sleep(Tools.RandomTool.getRandomGap(action.gap))
-            time.sleep(Tools.RandomTool.getRandomGap(event_gap))
-
-
-    @staticmethod
-    def Drag(position, action, event_gap):
-        if len(position) == 0:
-            print('未设置拖拽目标')
+        start, end = ActionEx._resolve_gesture_points(position, step)
+        if start is None:
+            print('未设置手势目标')
             return
-        i = 0
-        while i + 1 < len(position):
-            for j in range(action.run_time):
-                site = EventEx.GetRandomPosition([position[i], position[i + 1]])
-                if len(site[0]) == 0 or len(site[1]) == 0:
-                    continue
-                x1 = site[0][0]
-                y1 = site[0][1]
-                x2 = site[1][0]
-                y2 = site[1][1]
-                Tools.ActionTool.LeftDown(x1, y1, action.hwnd)
-                if x1 == x2 and y1 == y2:
-                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
-                elif x1 == x2:
-                    speed = action.duration / abs(y1 - y2)
-                    step = -1 if y1 > y2 else 1
-                    for y in range(y1, y2, step):
-                        Tools.ActionTool.MoveTo(x1, y, action.hwnd)
-                        time.sleep(speed)
-                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
-                elif y1 == y2:
-                    speed = action.duration / abs(x1 - x2)
-                    step = -1 if x1 > x2 else 1
-                    for x in range(x1, x2, step):
-                        Tools.ActionTool.MoveTo(x, y1, action.hwnd)
-                        time.sleep(speed)
-                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
-                else:
-                    k = (y1 - y2) / (x1 - x2)
-                    b = y1 - k * x1
-                    speed = action.duration / abs(x1 - x2)
-                    step = -1 if x1 > x2 else 1
-                    for x in range(x1, x2, step):
-                        y = int(k * x + b)
-                        Tools.ActionTool.MoveTo(x, y, action.hwnd)
-                        time.sleep(speed)
-                    Tools.ActionTool.LeftUp(x2, y2, action.hwnd)
-                time.sleep(Tools.RandomTool.getRandomGap(action.gap))
-            i += 2
-            time.sleep(Tools.RandomTool.getRandomGap(event_gap))
-
-    @staticmethod
-    def Input(action, event_gap):
-        for c in action.text:
-            Tools.ActionTool.InputCharacter(c)
-            time.sleep(Tools.RandomTool.getRandomGap(action.gap))
-        time.sleep(Tools.RandomTool.getRandomGap(event_gap))
-
-    @staticmethod
-    def Wait(action):
-        if type(action.wait_time).__name__ == 'list':
-            wait_time = Tools.RandomTool.getRandomGap(action.wait_time)
+        duration = float(step.get('duration', 1.0))
+        if platform == 'adb':
+            Tools.AdbAction.swipe(start[0], start[1], end[0], end[1], duration)
+        elif platform == 'windows':
+            Tools.WindowsAction.perform_drag(hwnd, start[0], start[1], end[0], end[1], duration)
         else:
-            wait_time = action.wait_time
-        time.sleep(wait_time)
+            Tools.MacAction.unsupported(step['op'])
+
+    @staticmethod
+    def execute_step(step, position, hwnd, default_gap, platform, session=None):
+        if session is None:
+            session = _PointerSession()
+        op = step['op']
+        step_gap = step.get('gap', default_gap)
+        button = step.get('button', 'left')
+
+        if platform == 'windows':
+            if op == 'click':
+                pt = ActionEx._resolve_point(position, int(step.get('pos', 0)))
+                if pt is None:
+                    print('未设定点击目标')
+                    return
+                Tools.WindowsAction.click(pt[0], pt[1], hwnd, button)
+            elif op == 'pointer_down':
+                pt = ActionEx._resolve_pointer_point(position, step, session, op)
+                if pt is None:
+                    print('未设定按下目标')
+                    return
+                button = session.button
+                Tools.WindowsAction.pointer_down(pt[0], pt[1], hwnd, button)
+            elif op == 'pointer_up':
+                pt = ActionEx._resolve_pointer_point(position, step, session, op)
+                if pt is None:
+                    print('未设定抬起目标')
+                    return
+                button = session.button if session.active else step.get('button', 'left')
+                Tools.WindowsAction.pointer_up(pt[0], pt[1], hwnd, button)
+                session.clear()
+            elif op == 'pointer_move':
+                pt = ActionEx._resolve_pointer_point(position, step, session, op)
+                if pt is None:
+                    print('未设定移动目标')
+                    return
+                Tools.WindowsAction.pointer_move(pt[0], pt[1], hwnd)
+            elif op == 'drag':
+                ActionEx._run_gesture(platform, hwnd, position, step)
+            elif op == 'wait':
+                seconds = step.get('seconds', 1.0)
+                if isinstance(seconds, list):
+                    time.sleep(Tools.RandomTool.getRandomGap(seconds))
+                else:
+                    time.sleep(float(seconds))
+            elif op == 'key':
+                value = step.get('value', '')
+                if not value:
+                    print('未设置按键')
+                    return
+                Tools.WindowsAction.key_press(value, hwnd)
+            elif op == 'text':
+                for c in step.get('value', ''):
+                    Tools.AdbAction.input_char(c)
+                    time.sleep(Tools.RandomTool.getRandomGap(default_gap))
+            else:
+                print(f'Windows 不支持步骤: {op}')
+                return
+
+        elif platform == 'adb':
+            if op == 'tap':
+                pt = ActionEx._resolve_point(position, int(step.get('pos', 0)))
+                if pt is None:
+                    print('未设定点击目标')
+                    return
+                Tools.AdbAction.tap(pt[0], pt[1])
+            elif op == 'swipe':
+                ActionEx._run_gesture(platform, hwnd, position, step)
+            elif op == 'wait':
+                seconds = step.get('seconds', 1.0)
+                if isinstance(seconds, list):
+                    time.sleep(Tools.RandomTool.getRandomGap(seconds))
+                else:
+                    time.sleep(float(seconds))
+            elif op == 'key':
+                value = step.get('value', '')
+                if not value:
+                    print('未设置按键')
+                    return
+                Tools.AdbAction.key_press(value)
+            elif op == 'text':
+                for c in step.get('value', ''):
+                    Tools.AdbAction.input_char(c)
+                    time.sleep(Tools.RandomTool.getRandomGap(default_gap))
+            else:
+                print(f'ADB 不支持步骤: {op}')
+                return
+
+        elif platform == 'mac':
+            Tools.MacAction.unsupported(op)
+            return
+        else:
+            print(f'未知平台: {platform}')
+            return
+
+        time.sleep(Tools.RandomTool.getRandomGap(step_gap))
 
     @staticmethod
     def GetFirstPosition(position):
@@ -103,15 +222,15 @@ class ActionEx:
     @staticmethod
     def doAction(action, position, event_gap):
         print('开始执行操作：' + action.name)
-        action_type = action.action_type
-        if action_type == 1:
-            ActionEx.LeftClick(position, action, event_gap)
-        elif action_type == 3:
-            ActionEx.Drag(position, action, event_gap)
-        elif action_type == 4:
-            ActionEx.Wait(action)
-        elif action_type == 5:
-            ActionEx.Input(action, event_gap)
+        platform = normalize_platform(getattr(action, 'platform', 'windows'))
+        steps = get_action_steps(action.__dict__)
+        default_gap = action.gap if action.gap is not None else [0.02, 0.03]
+        run_time = action.run_time if action.run_time is not None else 1
+        for _ in range(run_time):
+            session = _PointerSession()
+            for step in steps:
+                ActionEx.execute_step(step, position, action.hwnd, default_gap, platform, session)
+            time.sleep(Tools.RandomTool.getRandomGap(event_gap))
 
 
 class EventEx:

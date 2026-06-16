@@ -59,6 +59,18 @@ class AdbClient:
                 f'ADB 点击失败 (device={self.device_id}, code={result.returncode}): {stderr}'
             )
 
+    def keyevent(self, key: str) -> None:
+        result = subprocess.run(
+            self._base_cmd() + ['shell', 'input', 'keyevent', key],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode('utf-8', errors='replace').strip()
+            raise AdbError(
+                f'ADB 按键失败 (device={self.device_id}, code={result.returncode}): {stderr}'
+            )
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
         result = subprocess.run(
             self._base_cmd() + [

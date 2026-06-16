@@ -1,6 +1,14 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from action_steps import (
+    WINDOW_PLATFORM_OPS,
+    event_position_slots,
+    get_action_steps,
+    normalize_platform,
+    steps_need_window,
+    steps_position_demand,
+)
 from freer_api.store import ActionStore, EventStore
 from recognition.types import MATCH_TYPES
 
@@ -13,6 +21,72 @@ def _event_index() -> Dict[str, Dict[str, Any]]:
 
 def _action_names() -> Set[str]:
     return {item['name'] for item in ActionStore.list_actions()}
+
+
+def _action_index() -> Dict[str, Dict[str, Any]]:
+    return {item['name']: item for item in ActionStore.list_actions()}
+
+
+def _validate_action_event_contract(
+    event: Dict[str, Any],
+    action: Dict[str, Any],
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Cross-validate micro-event fields against bound action steps."""
+    issues: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    event_name = event.get('name', '')
+    action_name = action.get('name', action.get('action', ''))
+
+    try:
+        platform = normalize_platform(action.get('platform'))
+        steps = get_action_steps(action)
+    except ValueError as exc:
+        issues.append({
+            'code': 'invalid_action',
+            'message': f'动作 "{action_name}" 无效: {exc}',
+        })
+        return issues, warnings
+
+    needs_position, max_index = steps_position_demand(steps)
+    slots = event_position_slots(event)
+
+    if needs_position:
+        if slots is None:
+            warnings.append({
+                'code': 'no_position_source',
+                'message': (
+                    f'微事件 "{event_name}" 的动作 "{action_name}" 需要坐标，'
+                    '但未配置 symbol_start 或 default_position'
+                ),
+            })
+        elif max_index >= slots:
+            warnings.append({
+                'code': 'insufficient_position_slots',
+                'message': (
+                    f'微事件 "{event_name}" 的动作 "{action_name}" 需要位置索引 0–{max_index}，'
+                    f'当前事件仅提供 {slots} 个（索引 0–{slots - 1}）'
+                ),
+            })
+
+    window_name = (event.get('window_name') or '').strip()
+    if platform in WINDOW_PLATFORM_OPS and steps_need_window(steps) and not window_name:
+        warnings.append({
+            'code': 'missing_window_for_action',
+            'message': (
+                f'微事件 "{event_name}" 绑定 {platform} 动作 "{action_name}"，'
+                '但未配置 window_name（Win32 窗口消息需要目标句柄）'
+            ),
+        })
+    if platform == 'adb' and window_name:
+        warnings.append({
+            'code': 'adb_action_with_window',
+            'message': (
+                f'微事件 "{event_name}" 使用 ADB 动作 "{action_name}"，'
+                '通常无需 window_name（将忽略窗口句柄）'
+            ),
+        })
+
+    return issues, warnings
 
 
 def _child_ref(entry: Any) -> Optional[str]:
@@ -122,6 +196,14 @@ def validate_event(
             issues.append({'code': 'missing_action', 'message': f'微事件 "{name}" 未绑定动作'})
         elif action not in actions:
             issues.append({'code': 'missing_action_ref', 'message': f'动作不存在: {action}'})
+        else:
+            action_data = _action_index().get(action)
+            if action_data:
+                contract_issues, contract_warnings = _validate_action_event_contract(
+                    event, action_data,
+                )
+                issues.extend(contract_issues)
+                warnings.extend(contract_warnings)
         issues.extend(_validate_symbol(event.get('symbol_start'), 'symbol_start', event, 'start'))
         issues.extend(_validate_symbol(event.get('symbol_finish'), 'symbol_finish', event, 'finish'))
     else:

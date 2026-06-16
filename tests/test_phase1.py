@@ -13,6 +13,7 @@ for _mod in (
 
 import unittest
 
+from recognition.fallback_parse import parse_fallback_chain, serialize_fallback_chain
 from recognition.parse import parse_symbol
 from recognition.types import SymbolSpec, FINISH_DEBOUNCE_FRAMES, MAX_MATCH_MS_PER_FRAME
 from recognition.matchers.template import nms_boxes
@@ -50,6 +51,33 @@ class TestParseSymbol(unittest.TestCase):
         self.assertEqual(spec.roi, [1, 2, 3, 4])
         self.assertEqual(spec.fallback, ['feature', 'ocr'])
         self.assertEqual(spec.index, 2)
+
+    def test_flat_fallback_with_custom_target(self):
+        class Ev:
+            match_type_start = 'template'
+            match_fallback_start = 'template|b.bmp|feature'
+
+        spec = parse_symbol('a.bmp', kind='start', event=Ev())
+        self.assertEqual(spec.fallback, ['template|b.bmp', 'feature'])
+
+
+class TestParseFallbackChain(unittest.TestCase):
+    def test_type_only_steps(self):
+        self.assertEqual(parse_fallback_chain('feature|ocr'), ['feature', 'ocr'])
+
+    def test_type_with_target_single_step(self):
+        self.assertEqual(parse_fallback_chain('template|b.bmp'), ['template|b.bmp'])
+
+    def test_type_with_target_then_type(self):
+        self.assertEqual(
+            parse_fallback_chain('template|b.bmp|feature'),
+            ['template|b.bmp', 'feature'],
+        )
+
+    def test_round_trip_serialize(self):
+        entries = ['template|b.bmp', 'feature']
+        flat = serialize_fallback_chain(entries)
+        self.assertEqual(parse_fallback_chain(flat), entries)
 
 
 class TestNms(unittest.TestCase):

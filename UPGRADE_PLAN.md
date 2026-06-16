@@ -1,7 +1,8 @@
 # Freer 升级计划
 
 > 分阶段路线图与架构设计文档。  
-> 当前基线：`cursor/upgrade-plan` 分支（V0.3，Phase 0–2 已落地）。
+> **执行排期与 V0.4.3+ 审查项见 [UPGRADE_PLAN_V2.md](./UPGRADE_PLAN_V2.md)。**  
+> 当前基线：工作区 **V0.4.0**（`package.json`）；Phase 0–2 已落地；Phase 3 主体已完成；**动作模块 `platform` + `steps` 基础重构已落地**（§4.7.0）；**Phase 3.5（§4.7 A+B）已完成**。
 
 ---
 
@@ -9,9 +10,9 @@
 
 Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷却机制**）思路清晰，适合模拟器脚本类场景。
 
-**当前状态（V0.3）**：Phase 0–2 已完成——核心 P0 逻辑缺陷已修复，`recognition/` 多 Matcher 路由与 `freer_api` sidecar 已可用。剩余工作集中在 **Phase 3 产品化 GUI**（Tauri + React，§4.4.8）及少量 P1/P2 遗留项（§二）。
+**当前状态（V0.4）**：Phase 0–2 已完成；Phase 3 **React GUI + Tauri 脚手架 + `freer_api` v1.1 能力** 主体已落地（§五 Phase 3 验收项 6/7 通过，1 项待 VM 验收）。**Phase 3.5 动作模块优化（§4.7 A+B）已完成**。**收尾中**：Windows 便携包已有（`dist/Freer/`），NSIS 安装包与干净 VM 验收未完成；OpenAPI 契约检查脚本已有（`gui api:types:check`），**CI workflow 未接入**。
 
-**推进顺序**：修 Bug → 稳架构 → 识别路由 → 工程化（`freer_api`）→ **GUI 产品化（路线 B）** → Phase 4 增强能力。
+**推进顺序**：Phase 3 打包收尾 → **Phase 4 / §4.7 阶段 C（V0.5）** 增强能力。
 
 ### 实施进度（`cursor/upgrade-plan` 分支）
 
@@ -21,8 +22,9 @@ Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷�
 | Phase 1 | V0.2 | **已完成** | `recognition/`、FrameContext、TemplateMatcher、调度防抖 |
 | Phase 1.5 | V0.25 | **已完成** | feature/ocr/ui/color、fallback、last_resort |
 | Phase 2 | V0.3 | **已完成** | `config.yaml`、`freer_api`、`freer_log`、序列化白名单 |
-| Phase 3 | V0.4 | **进行中** | GUI 页面已落地（含列表/画布事件库、可调三栏）；打包验收待完成（§4.4.8） |
-| Phase 4 | — | 未开始 | 多尺度、录制、可选重型 Matcher |
+| Phase 3 | V0.4 | **收尾中** | GUI 六页 + 树形编排 + sidecar 联调已通；便携包与 engine 二进制已有；待完成：VM 验收、NSIS 安装包、OpenAPI CI workflow（§4.4.8） |
+| Phase 3.5 | V0.4.1–.2 | **3.5a 已完成；3.5b 已完成** | §4.7 A/B 全部落地（§4.7.3） |
+| Phase 4 | — | 未开始 | 多尺度、录制、可选重型 Matcher、macOS 动作（§4.7 D） |
 
 > Phase 3 原则：**不限工期，优先完成度与质量**；先冻结 OpenAPI v1.1并实现 API，再开发前端。
 
@@ -46,19 +48,32 @@ Freer 的核心设计（**事件树 + 图像触发 + 栈式调度 + 异常/冷�
 | P2-1, P2-2 | 单点匹配、颜色空间 | Phase 1（TemplateMatcher + NMS） |
 | P2-5, P2-9 | 序列化混入运行时字段、仅 `print` 日志 | Phase 2（白名单序列化、`freer_log`） |
 | P2-7 | Add/Edit 重复代码 | Phase 2（`event_form_common.py`；完整 GUI 待 Phase 3） |
+| P2-8 | 右键点击 `action_type=2` 未实现 | **已解决**：`platform + steps`（`click` + `button:right`，§4.7.0） |
+| A-0 | 动作仍为 `action_type` 枚举 | **已解决**：`platform` + `steps` 编排 + 旧数据迁移（§4.7.0） |
 
 ### 2.2 待处理（Phase 3+）
 
 | # | 问题摘要 | 计划 |
 |---|----------|------|
-| P1-4 | `LeftClick` 原地修改 position 序号 | Phase 4 或引擎小修 |
+| P1-4 | `LeftClick` 原地修改 position 序号 | **已闭合（A4）** |
 | P1-5 | `ColdEventCape` `run_time` 无下界 | Phase 4 |
 | P1-6 | 异常微事件不触发 `inactive_list` 恢复 | Phase 4 |
-| P1-9 | `InputCharacter` shell 注入风险 | Phase 4（ADB 安全输入） |
+| P1-9 | `InputCharacter` shell 注入风险 | **动作优化 D4**（§4.7.3） |
 | P2-3 | `GrandEvent.symbol_start` 拼接未使用 | 低优先级清理 |
 | P2-4 | `type(x).__name__ == 'dict'` | 低优先级清理 |
 | P2-6 | `WriteJSON` 可读性 | Phase 3 GUI 保存时处理 |
-| P2-8 | 右键点击 `action_type=2` 未实现 | Phase 4 |
+
+### 2.3 动作模块待处理（§4.7.3）
+
+| # | 问题摘要 | 状态 | 计划 |
+|---|----------|------|------|
+| A-1 | 动作 `pos` 与事件识别区域数量未联合校验 | **已完成** | A1 |
+| A-2 | `pointer_down` → `move` → `up` 每步重新随机坐标 | **已完成** | A2 |
+| A-3 | Windows 动作 `text` 仍走 ADB；mac 仅有 schema | **已完成** | A3：动作页 + README 已说明 |
+| A-4 | `action.gap` / `step.gap` / `event.gap` / `wait` 语义重叠 | **已完成** | B2：事件/动作页文案 + README |
+| A-5 | 事件 UI 绑动作时不展示平台与步骤摘要 | **已完成** | B1 |
+| A-6 | `symbol_start` 兼作触发与坐标来源 | 未开始 | C1 |
+| A-7 | README 仍描述旧 `action_type` | **已完成** | B4 |
 
 ---
 
@@ -398,7 +413,7 @@ def resolve_for_action(self, spec, event):
 | Phase 1 | 已完成 | L1 fallback + 性能预算 |
 | Phase 1.5 | 已完成 | L2 `default_position` / `expand_roi` / `last_known` |
 | Phase 2 | 已完成 | L3 `max_consecutive_miss_frames`、调试截图、暂停任务 |
-| Phase 3 | 待实施 | GUI 配置 `last_resort`、fallback 链可视化 |
+| Phase 3 | **已完成** | `RecognitionPipelinePanel`：主识别 → 备用步骤（类型 + 可选目标）→ L2 兜底；流程摘要条；`recognition/fallback_parse.py` 修正扁平 fallback 解析 |
 
 ### 4.4 GUI 升级方案（路线 B：Python 引擎 + Tauri/React 界面）
 
@@ -493,7 +508,7 @@ flowchart TB
 | **v1.0** | Phase 2 已交付 | events/actions/config/task/health/logs |
 | **v1.1** | Phase 3 冻结 | 上表新增端点 + task 状态机扩展；破坏性变更升 v2 |
 
-**类型同步（已定案）**：前端使用 `openapi-typescript` 从 `/openapi.json` 生成 `gui/src/api/types.ts`；UI 层用 zod 做表单校验，以生成类型为源，CI 做契约回归。
+**类型同步（已定案）**：前端使用 `openapi-typescript` 从 `/openapi.json` 生成 `gui/src/api/schema.ts` 作为契约检查源；业务类型仍由手写 `gui/src/api/types.ts` 提供，UI 层用 zod 做表单校验，CI 做契约回归。
 
 **响应约定**：JSON 统一 `{ "ok": true, "data": ... }` / `{ "ok": false, "error": { "code", "message" } }`；引擎异常映射为 HTTP 4xx/5xx，不向前端抛 Python traceback。
 
@@ -631,32 +646,188 @@ Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 ##### 4.4.8.6 实施顺序（按依赖，非工期）
 
 ```
-0. OpenAPI v1.1 + pause/resume + validate + preview + tree API
-1. Tauri 脚手架 + 双模式 + health 门控
-2. openapi-typescript + 设置页 + 动作 CRUD
-3. 事件属性表单（微/宏 + 识别高级字段）
-4. 树形编排编辑器（DnD + 异常 + 环检测 + 画布视图）— 除环检测外已落地
-5. 任务控制台 + WS 日志
-6. 模板/ROI 实验室
-7. 导入/导出 zip
-8. PyInstaller + Tauri 打包 + VM 验收
-9. PySide deprecated + 文档
+0. [x] OpenAPI v1.1 + pause/resume + validate + preview + tree API
+1. [x] Tauri 脚手架 + 双模式 + health 门控
+2. [x] openapi-typescript 脚本 + 设置页 + 动作 CRUD（含 platform + steps 编排，§4.7.0）
+3. [x] 事件属性表单（微/宏 + 识别高级字段）
+4. [x] 树形编排编辑器（DnD + 异常 + 画布视图）；环检测经 validate API
+5. [x] 任务控制台 + WS 日志
+6. [x] 模板/ROI 实验室
+7. [x] 导入/导出 zip
+8. [~] PyInstaller + Tauri 打包（`scripts/package.*`、便携版 `dist/Freer/` 已有）；**NSIS 安装包与 VM 验收未完成**
+9. [~] 旧 GUI 退场：README 已迁移至 Web GUI（`docs-deprecate-pyside`）；工作区无 `View/`；**显式 deprecated 说明未写入 README**
 ```
 
 ##### 4.4.8.7 建议 PR 切分
 
-| PR | 内容 |
-|----|------|
-| engine-api-v1.1 | pause/resume、validate、preview、tree、assets、import/export |
-| tauri-scaffold | 双模式、health、崩溃 UI |
-| gui-foundation | 类型生成、布局、设置、动作 |
-| event-forms | 微/宏属性 + 识别字段 |
-| event-tree-editor | 三栏树形编排 + 可调列宽 + 画布视图（**已实现**） |
-| task-console | 状态机 UI + 日志 |
-| template-roi-lab | Canvas + preview |
-| import-export | 事件包 |
-| packaging-windows | PyInstaller + Tauri |
-| docs-deprecate-pyside | README 迁移 |
+| PR | 内容 | 状态 |
+|----|------|------|
+| engine-api-v1.1 | pause/resume、validate、preview、tree、assets、import/export | **已落地** |
+| tauri-scaffold | 双模式、health、崩溃 UI | **已落地** |
+| gui-foundation | 类型生成、布局、设置、动作 CRUD | **已落地** |
+| event-forms | 微/宏属性 + 识别字段 | **已落地** |
+| event-tree-editor | 三栏树形编排 + 可调列宽 + 画布视图 | **已落地** |
+| task-console | 状态机 UI + 日志 | **已落地** |
+| template-roi-lab | Canvas + preview | **已落地** |
+| import-export | 事件包 | **已落地** |
+| packaging-windows | PyInstaller + Tauri 便携包 + NSIS + VM 验收 | **进行中**（便携包已有，VM/安装包待完成） |
+| docs-deprecate-pyside | README 迁移至 Web GUI；旧 PySide 退场说明 | **大部分完成**（README 已更新；deprecated 脚注待补） |
+
+---
+
+### 4.7 动作模块与事件契合（V0.4.1+）
+
+> **基线（§4.7.0 已落地）**：动作由 `platform` + `steps[]` 描述，支持步骤编排；平台原子操作见 `action_steps.py`。微事件通过 `action` 字段引用动作名；执行时由 `DoMicroEvent` 解析 `position[]` 后按 `action.platform` 调用 `ActionEx.doAction`。  
+> **目标（§4.7.3 A+B 已达成；C/D 未开始）**：动作–事件契约可校验、配置错误尽量在保存期暴露。
+
+#### 4.7.0 实施进度（动作基础重构）
+
+| 交付项 | 状态 | 位置 |
+|--------|------|------|
+| `platform` + `steps` 数据模型与 `sanitize` | **已完成** | `action_steps.py`、`serialization.py` |
+| 旧 `action_type` → `steps` 迁移 | **已完成** | `action_steps._legacy_to_steps` |
+| 分平台执行器（Win32 / ADB / mac 占位） | **已完成** | `Tools.WindowsAction`、`AdbAction`、`MacAction` |
+| 引擎按 `platform` 分发步骤 | **已完成** | `Control.ActionEx.execute_step` |
+| GUI 动作页：平台选择 + 步骤编排 + 模板 | **已完成** | `gui/src/pages/ActionsPage.tsx`、`lib/actionSteps.ts` |
+| 示例 `data/action.json` 新格式 | **已完成** | `data/action.json` |
+| 单测 `test_action_steps` | **已完成** | `tests/test_action_steps.py` |
+| 动作页平台通道说明（A3 部分） | **已完成** | `ActionsPage` 平台下拉旁文案 |
+| 联合校验 A1 | **已完成** | `freer_api/validate.py`：位置槽位、window/platform 警告 |
+| 指针会话 A2 | **已完成** | `Control.py`：`_PointerSession` |
+| position 无副作用 A4 | **已完成** | `Control.py`（P1-4 已闭合） |
+| 事件页动作摘要 B1 | **已完成** | `EventPropertyForm` + `ActionBindingPanel.tsx` |
+| README 动作章节 B4 | **已完成** | `README.md` |
+
+#### 4.7.1 当前设计评估
+
+**合理之处**
+
+| 维度 | 说明 |
+|------|------|
+| 职责分离 | 事件管「何时、在哪」；动作管「怎么做」 |
+| 可复用 | `action.json` 与 `event.json` 松耦合，多微事件可共享动作 |
+| 步骤编排 | 双击、长按、滑动等由步骤组合，避免 `action_type` 枚举膨胀 |
+| 平台分通道 | Windows（Win32 消息，可拆分按下/抬起）与 ADB（`tap`/`swipe` 成品手势）语义诚实 |
+| 坐标注入 | `symbol_start` 多图 `\|` 分隔 → `pos` 索引；与 `default_position` 成对坐标一致 |
+
+**主要问题**
+
+| 维度 | 说明 |
+|------|------|
+| 契约隐式 | 动作所需 `pos`/`to_pos` 与事件提供的识别区域数量无联合校验 |
+| 指针会话 | 跨步骤 `pointer_down`/`move`/`up` 每步重新随机取点，连贯手势不可靠 |
+| 执行不一致 | Windows 平台 `text` 步骤仍经 ADB；macOS 可选但无执行器 |
+| 时间语义重叠 | `action.gap`、`step.gap`、`event.gap`、`wait` 步骤四层，文档与 UI 未区分 |
+| 事件 UI 盲区 | 绑动作时只见名称，不见平台与步骤摘要 |
+| 触发=坐标 | `symbol_start` 同时承担准入条件与操作坐标，「A 触发、B 操作」表达力不足 |
+
+**平台原子操作（现行）**
+
+| 平台 | 原子操作 | 执行通道 |
+|------|----------|----------|
+| `windows` | `click`、`pointer_down`、`pointer_up`、`pointer_move`、`drag`、`wait`、`key`、`text` | `PostMessage` → 模拟器子窗口 |
+| `adb` | `tap`、`swipe`、`wait`、`key`、`text` | `adb shell input` |
+| `mac` | 同 Windows schema | **未实现**（预留） |
+
+共享跨平台原语：`wait`、`key`、`text`（时间与键盘维度）。
+
+#### 4.7.2 事件–动作运行时契约
+
+```
+微事件触发
+  → 解析 position[]（symbol_start 识别 或 default_position）
+  → 解析 hwnd（window_name，Windows 类动作需要）
+  → ActionEx.doAction(action, position, event.gap)
+       → 按 action.platform 分发步骤
+       → action.run_time 重复整套 steps
+       → 结束后应用 event.gap
+```
+
+**分工原则**
+
+- **事件层（秒～分钟）**：栈调度、完成判定（`symbol_finish`）、冷却（`max_suc_run_time`）、异常队列。
+- **动作层（毫秒～秒）**：单次触发内的步骤链；`wait` 步骤仅适合短延迟（如双击间隔），等界面应依赖 `symbol_finish` 或单独微事件。
+
+#### 4.7.3 分阶段优化路线
+
+##### 阶段 A — 契约收紧（V0.4.1，P0）
+
+| 任务 | 状态 | 说明 | 关键文件 |
+|------|------|------|----------|
+| **A1 联合校验** | **已完成** | `validate_event` 展开绑定动作的 `steps`：检查最大 `pos`/`to_pos` 与 `symbol_start` 分段数 / `default_position` 对数；`windows`/`mac` 动作警告缺 `window_name`；`adb` 动作提示 `window_name` 通常多余 | `freer_api/validate.py` |
+| **A2 指针会话** | **已完成** | 单套 steps 执行内：`pointer_down` 锁定坐标；`pointer_move`/`pointer_up` 默认复用；`click`/`drag` 仍独立取点 | `Control.py` |
+| **A3 通道澄清** | **已完成** | 动作页 + README：`text` 经 ADB、mac 未实现 | `ActionsPage.tsx`、`README.md` |
+| **A4 position 无副作用** | **已完成** | 解析坐标用副本，不 mutate 传入 `position`（闭合 P1-4） | `Control.py` |
+
+**里程碑 M1（可配可信）**：配置错误主要在保存/校验阶段暴露；指针编排同点按下–抬起可靠。
+
+##### 阶段 B — 体验对齐（V0.4.2，P1）
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| **B1 事件页动作元信息** | **已完成** | `EventPropertyForm` 展示平台徽章、`summarizeSteps`、所需位置数；`actionContract.ts` 客户端契约警告 | `ActionBindingPanel.tsx` |
+| **B2 时间语义文案** | **已完成** | 事件/动作页区分 `event.gap`、`action.gap`、`wait`；README「等待与间隔」 | `EventPropertyForm.tsx`、`ActionsPage.tsx`、`README.md` |
+| **B3 run_time 产品化** | **已完成** | 动作页 + 事件绑定面板说明 run_time vs `max_suc_run_time`；双击推荐步骤编排 | 同上 |
+| **B4 文档迁移** | **已完成** | README `platform` + `steps`、示例 `action.json`、旧 `action_type` 迁移说明 | `README.md` |
+
+**里程碑 M2（可教可用）**：文档/GUI 与实现一致；无已知 P0 执行缺陷。
+
+##### 阶段 C — 模型增强（V0.5，P2）
+
+| 任务 | 说明 |
+|------|------|
+| **C1 触发 vs 操作目标** | 微事件可选 `symbol_operate`（默认同 `symbol_start`），支持「A 图触发、B 区域操作」 |
+| **C2 默认 platform** | `config.yaml` 增加 `default_action_platform`；新建动作继承 |
+| **C3 纯等待微事件** | `dwell_seconds` 或内置 `_builtin/wait_*` 系统动作，减少「空操作动作」 |
+| **C4 动作试跑** | `POST /actions/{name}/dry-run` + GUI 试跑（结合 preview 坐标） |
+
+**里程碑 M3（模型清晰）**：触发与操作可分离；长等待主要在事件层表达。
+
+##### 阶段 D — 平台补全（V0.6+，按需）
+
+| 任务 | 说明 |
+|------|------|
+| **D1 macOS 执行器** | `MacAction` 接 Quartz/CGEvent |
+| **D2 ADB 增强** | 评估 `input motionevent`；文档写明限制 |
+| **D3 滚轮 step** | Windows `WM_MOUSEWHEEL` 可选原子步骤 |
+| **D4 安全输入** | ADB text 转义（闭合 P1-9） |
+| **D5 录制反写** | 录制操作 → 生成 `steps` JSON（与 Phase 4 录制向导联动） |
+
+#### 4.7.4 实施优先级
+
+```
+P0（立刻，可与 Phase 3 打包并行）
+  → A1 联合校验
+  → A2 指针会话
+  → A3 text/mac 通道澄清
+
+P1（下一迭代）
+  → A4 position 无副作用
+  → B1 事件页动作信息
+  → B2/B3 时间语义
+  → B4 文档更新
+
+P2（V0.5）
+  → C1–C4
+
+P3（按需）
+  → D1–D5
+```
+
+#### 4.7.5 验收标准（动作优化）
+
+- [x] 微事件绑定动作后，`POST /events/validate` 能报告位置数量不匹配（warning）
+- [x] Windows 步骤 `pointer_down` + `wait` + `pointer_up` 同点坐标一致
+- [x] 事件属性面板可见动作 `[平台] 步骤摘要`
+- [x] README 动作章节与 `action_steps.py` 中 `PLATFORM_OPS` 一致
+- [x] `LeftClick` 类逻辑不再修改传入 `position` 原数组（P1-4 关闭）
+
+**§4.7.0 已完成（不计入上表）**：
+
+- [x] 动作 CRUD 使用 `platform` + `steps` 存储与执行
+- [x] 三平台原子操作 schema 与 `normalize_step` 校验
+- [x] 旧 `action_type` 加载时自动迁移为 `steps`
+- [x] `tests/test_action_steps.py` 通过
 
 ---
 
@@ -688,8 +859,32 @@ Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 - [x] 软暂停后可 Resume 并从帧边界继续；硬 Stop 不可恢复
 - [x] ROI 选框保存后引擎识别正确；`recognize/preview` 与引擎一致
 - [x] 编排保存通过 `POST /events/validate`（环、引用、ROI）
-- [ ] 干净 Windows 环境可安装运行（文档列 ADB/OpenCV 前置）
-- [ ] `openapi-typescript` 生成类型与 `/openapi.json` 同步（CI 契约检查）
+- [ ] 干净 Windows 环境可安装运行（便携包或 NSIS；文档列 ADB/OpenCV 前置）
+- [~] OpenAPI 类型契约：`gui/src/api/schema.ts` 已纳入版本库；本地检查 `pnpm --dir gui api:types:check`（`scripts/check-openapi-types.mjs`）可用；**根目录脚本与 CI workflow 未接入**
+
+---
+
+### Phase 3.5 — 动作模块优化（V0.4.1 → V0.4.2）
+
+**目标**：在 Phase 3 GUI 已具备动作 CRUD / 步骤编排基础上，收紧动作–事件契约并改善配置体验。详见 **§4.7**。
+
+| 子阶段 | 版本 | 范围 | 状态 | 验收 |
+|--------|------|------|------|------|
+| **3.5-pre** | — | §4.7.0 基础重构 | **已完成** | platform + steps 引擎/GUI/迁移 |
+| **3.5a** | V0.4.1 | A1–A4 | **已完成** | M1：联合校验 + 指针会话 |
+| **3.5b** | V0.4.2 | B1–B4 | **已完成** | M2：事件页动作摘要 + 文档一致 |
+
+**建议 PR 切分**
+
+| PR | 内容 | 状态 |
+|----|------|------|
+| action-steps-platform | §4.7.0：`platform` + `steps` 模型、执行器、GUI | **已落地** |
+| action-validate-contract | A1：`validate_event` 动作–位置联合校验 | **已落地** |
+| action-pointer-session | A2、A4：指针会话 + position 无副作用 | **已落地** |
+| action-platform-docs | A3、B4：text 通道说明 + README 动作章节 | **已落地** |
+| event-action-ui-hints | B1–B3：事件表单动作元信息 + gap/wait 文案 | **已落地** |
+
+可与 `packaging-windows` 并行；**C 阶段（V0.5）** 宜在 Phase 3 打包验收后再改事件 schema。
 
 ---
 
@@ -698,11 +893,12 @@ Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
 | 多尺度 template | 中 | 模板 0.8x–1.2x 缩放匹配，应对分辨率差异 |
-| 纯 ADB 输入模式 | 中 | 全链路 adb tap/swipe，与截屏坐标统一 |
-| 录制向导 | 低 | 截屏选点 + ROI → 自动生成微事件与 SymbolSpec |
+| 纯 ADB 输入模式 | 中 | 全链路 adb tap/swipe，与截屏坐标统一（见 §4.7 D2） |
+| 录制向导 | 低 | 截屏选点 + ROI → 自动生成微事件与 SymbolSpec；反写 `steps`（§4.7 D5） |
 | 插件化 Matcher | 低 | 自定义 Python Matcher hook 注册到 Router |
 | YOLO / CLIP 检测 | 低 | **默认关闭**的可选插件；仅复杂自绘 UI 且用户显式启用 |
 | 插件化动作 | 低 | 自定义 Python 脚本动作 hook |
+| macOS 动作执行 | 低 | §4.7 D1：`MacAction` 实现 |
 
 ---
 
@@ -718,20 +914,30 @@ Sidecar 崩溃：全屏错误态 + 重试；禁止 silent fail。
 | OCR / uiautomator2 可选依赖 | `requirements-optional.txt`；缺失时跳过并告警 |
 | fallback / last_resort 误点 | 性能预算 §4.3.6；`last_known` TTL；关键步骤默认 `pause` |
 | 子事件语义变更影响旧脚本 | 必要时 `legacy_mode` 开关（未实现，按需） |
+| 动作 platform 与 window 错配 | §4.7 A1 联合校验；事件 UI 展示平台（B1） |
+| 跨步骤指针坐标漂移 | §4.7 A2 指针会话 |
+| 动作/事件 gap 配置困惑 | §4.7 B2 文案与模板调整 |
 
 ---
 
 ## 七、当前优先级
 
 ```
-Phase 3（进行中）
-  → engine-api-v1.1
-  → tauri-scaffold → gui-foundation → event-forms → event-tree-editor
-  → task-console → template-roi-lab → import-export → packaging-windows
+Phase 3（收尾）
+  → packaging-windows（NSIS 安装包 + 干净 VM 验收）
+  → openapi-typescript CI（根 package.json 挂接 + GitHub Actions）
+  → docs-deprecate-pyside（README 补 deprecated 脚注）
+
+Phase 3.5（已完成，§4.7）
+  → [x] action-steps-platform（§4.7.0）
+  → [x] action-validate-contract
+  → [x] action-pointer-session
+  → [x] event-action-ui-hints
+  → [x] action-platform-docs
 
 Phase 4（按需）
   → 多尺度 template / 纯 ADB / 录制 / 插件化 Matcher
-  → §二 遗留 P1/P2 小修
+  → §4.7 阶段 C/D；§二 遗留 P1/P2 小修
 ```
 
 ---
@@ -743,9 +949,13 @@ Phase 4（按需）
 | **V0.2** | 稳定版 | **已达成** | Phase 0 + Phase 1 |
 | **V0.25** | 识别版 | **已达成** | Phase 1.5 多 Matcher 路由 |
 | **V0.3** | 工程版 | **已达成** | Phase 2：`config`、`freer_api`、日志、序列化 |
-| **V0.4** | 工具版 | 进行中 | Phase 3：Tauri/React + 树形编辑器 + v1.1 API（§4.4.8） |
+| **V0.4** | 工具版 | **收尾中** | Phase 3：Tauri/React + 树形编辑器 + v1.1 API；便携包已有；VM/NSIS/CI 待完成 |
+| **V0.4.0** | 动作编排 | **已达成** | §4.7.0：`platform` + `steps` 引擎与 GUI |
+| **V0.4.1** | 动作契约 | **已达成** | Phase 3.5a：联合校验、指针会话（§4.7 A） |
+| **V0.4.2** | 配置体验 | **已达成** | Phase 3.5b：事件页动作摘要、README（§4.7 B） |
+| **V0.5** | 编排增强 | 未开始 | §4.7 C：触发/操作分离、试跑 |
 | **V1.0** | 正式版 | — | 文档齐全、核心场景验证、P0/P1 清零 |
 
 ---
 
-*文档维护：`cursor/upgrade-plan` 分支。§4.3 识别路由、§4.4 GUI（路线 B）、§4.4.8 Phase 3 已定案。Phase 0–2 已合并；下一步：冻结并实现 OpenAPI v1.1。*
+*文档维护：工作区主分支（2025-06 核实）。**Phase 3.5（§4.7 A+B）已全部落地**；下一步：**Phase 3 打包收尾**（NSIS、VM 验收、OpenAPI CI workflow）或 **§4.7 阶段 C（V0.5）**。*

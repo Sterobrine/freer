@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 import paths
@@ -84,6 +85,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='Freer API', version='1.1.0', lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
 
 
 @app.exception_handler(Exception)
@@ -188,6 +196,28 @@ def list_templates():
         return ok([])
     files = sorted(str(p.relative_to(paths.PROJECT_ROOT)) for p in img_dir.rglob('*.bmp'))
     return ok(files)
+
+
+@app.post('/templates/upload')
+async def upload_template(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith('.bmp'):
+        return JSONResponse(status_code=400, content=fail('invalid_file', '仅支持 .bmp 模板', 400))
+    safe = Path(file.filename).name
+    if not safe or safe.startswith('.'):
+        return JSONResponse(status_code=400, content=fail('invalid_file', '无效文件名', 400))
+    paths.refresh_paths()
+    img_dir = paths.IMG_DIR
+    img_dir.mkdir(parents=True, exist_ok=True)
+    target = (img_dir / safe).resolve()
+    try:
+        target.relative_to(img_dir.resolve())
+    except ValueError:
+        return JSONResponse(status_code=400, content=fail('invalid_path', '无效路径', 400))
+    content = await file.read()
+    target.write_bytes(content)
+    rel = str(target.relative_to(paths.PROJECT_ROOT)).replace('\\', '/')
+    logger.info('上传模板: %s', rel)
+    return ok({'path': rel})
 
 
 @app.post('/capture')

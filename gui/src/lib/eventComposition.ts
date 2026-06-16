@@ -121,9 +121,10 @@ export function getEventAtPath(
   const parent = getEventAtPath(rootMacro, index, ref.parentPath);
   if (!parent || parent.event_type !== 0) return null;
 
-  let name: string | undefined;
+  let name: string | null | undefined;
   if (ref.kind === 'child') {
-    name = childRefName(parent.event_list?.[ref.index] ?? { event: '' });
+    const entry = parent.event_list?.[ref.index];
+    name = entry != null ? childRefName(entry) : null;
   } else {
     name = parent.exception_list?.[ref.index];
   }

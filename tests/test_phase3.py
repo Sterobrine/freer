@@ -14,7 +14,8 @@ _np.zeros = MagicMock(return_value=MagicMock(shape=(100, 100, 3)))
 
 for _mod in (
     'win32gui', 'win32api', 'win32con', 'win32ui', 'cv2', 'numpy',
-    'paddleocr', 'uiautomator2',
+    'paddleocr', 'uiautomator2', 'fastapi', 'fastapi.middleware', 'fastapi.responses',
+    'starlette', 'starlette.websockets', 'uvicorn',
 ):
     sys.modules.setdefault(_mod, _np if _mod == 'numpy' else MagicMock())
 
@@ -89,7 +90,13 @@ class TestEventTree(unittest.TestCase):
             {'name': '子', 'event_type': 1, 'action': '点'},
             {'name': '异', 'event_type': 1, 'action': '点', 'is_exception': True},
         ]
-        actions = [{'name': '点', 'action_type': 1, 'run_time': 1, 'gap': [0.1, 0.2]}]
+        actions = [{
+            'name': '点',
+            'platform': 'windows',
+            'run_time': 1,
+            'gap': [0.1, 0.2],
+            'steps': [{'op': 'click', 'pos': 0}],
+        }]
         (data_dir / 'event.json').write_text(json.dumps(events, ensure_ascii=False), encoding='utf-8')
         (data_dir / 'action.json').write_text(json.dumps(actions, ensure_ascii=False), encoding='utf-8')
         paths.PROJECT_ROOT = root

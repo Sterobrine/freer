@@ -1,3 +1,5 @@
+import type { ActionPlatform, ActionStep } from '../lib/actionSteps';
+
 export type ApiError = { code: string; message: string };
 
 export type ApiResult<T> =
@@ -47,11 +49,15 @@ export type FreerEvent = {
 export type FreerAction = {
   name: string;
   id?: number;
-  action_type: number;
+  platform: ActionPlatform;
   run_time: number;
+  gap?: [number, number];
+  steps: ActionStep[];
+
+  // legacy fields (kept for migration compatibility)
+  action_type?: number;
   wait_time?: number | null;
   duration?: number | null;
-  gap?: [number, number];
   text?: string;
 };
 

@@ -1,1 +1,32 @@
-[{"name": "\u5de6\u952e\u5355\u51fb1\u6b21", "id": 1, "action_type": 1, "run_time": 1, "wait_time": null, "duration": null, "gap": [0.02, 0.03]}, {"name": "\u7b49\u5f851s", "id": 2, "action_type": 4, "run_time": 1, "wait_time": 1, "duration": null, "gap": [0.02, 0.03]}, {"name": "\u62d6\u62fd\u4e00\u6b21", "action_type": 3, "run_time": 1, "wait_time": null, "duration": 1.5, "gap": [0.02, 0.03]}, {"name": "\u8f93\u5165maple", "action_type": 5, "run_time": 1, "wait_time": null, "duration": null, "text": "maple", "gap": [0.02, 0.03]}]
+[
+  {
+    "name": "左键单击1次",
+    "id": 1,
+    "platform": "windows",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "click", "pos": 0 }]
+  },
+  {
+    "name": "等待1s",
+    "id": 2,
+    "platform": "windows",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "wait", "seconds": 1 }]
+  },
+  {
+    "name": "拖拽一次",
+    "platform": "windows",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "drag", "from_pos": 0, "to_pos": 1, "duration": 1.5 }]
+  },
+  {
+    "name": "输入maple",
+    "platform": "adb",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "text", "value": "maple" }]
+  }
+]
