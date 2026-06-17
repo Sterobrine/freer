@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { ProjectSwitcher } from './ProjectSwitcher';
 
 const links = [
   { to: '/events', label: '事件库' },
@@ -23,6 +24,7 @@ export function Layout() {
               API {health.data.data.api_version}
             </span>
           )}
+          <ProjectSwitcher />
         </div>
         <nav className="flex gap-1">
           {links.map((link) => (

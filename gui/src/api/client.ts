@@ -82,6 +82,12 @@ export const api = {
     const body = (await resp.json()) as ApiResult<{ path: string }>;
     return unwrap(body);
   },
+  templateCrop: (body: { rect: number[]; name?: string }) =>
+    request<{ path: string; filename: string }>('/templates/crop', {
+      method: 'POST',
+      body: JSON.stringify({ rect: body.rect, name: body.name }),
+    }).then(unwrap),
+
   capture: () => request<{ frame_id: number; url: string }>('/capture', { method: 'POST' }).then(unwrap),
   screenshotUrl: () => `${apiBaseUrl()}/screenshot?t=${Date.now()}`,
   assetUrl: (filename: string) => `${apiBaseUrl()}/assets/img/${encodeURIComponent(filename)}`,
@@ -112,6 +118,15 @@ export const api = {
     const body = (await resp.json()) as ApiResult<{ imported_events: number; imported_actions: number }>;
     return unwrap(body);
   },
+
+  // ── Project API (Phase 5F) ──
+  listProjects: () => request<Array<{ id: string; name: string; description: string; default_root_event: string; tags: string[] }>>('/projects').then(unwrap),
+  createProject: (body: { id: string; name?: string; description?: string; default_root_event?: string; tags?: string[] }) =>
+    request('/projects', { method: 'POST', body: JSON.stringify(body) }).then(unwrap),
+  getProject: (id: string) => request<{ id: string; name: string; stats: { event_count: number; macros: number; micros: number; exceptions: number } }>('/projects/' + encodeURIComponent(id)).then(unwrap),
+  deleteProject: (id: string) => request<{ deleted: string }>('/projects/' + encodeURIComponent(id), { method: 'DELETE' }).then(unwrap),
+  activateProject: (id: string) => request<{ id: string; name: string }>('/projects/' + encodeURIComponent(id) + '/activate', { method: 'POST' }).then(unwrap),
+  getActiveProject: () => request<{ id: string; name: string }>('/projects/active').then(unwrap),
 };
 
 export function wsLogsUrl(): string {

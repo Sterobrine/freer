@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronRight,
   GitBranch,
@@ -9,9 +10,9 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
-import type { FreerEvent, OpenEventContext } from '../api/types';
+import type { FreerEvent, OpenEventContext, ValidationIssue } from '../api/types';
 import { CompositionTreeView } from '../components/events/CompositionTreeView';
 import { EventGraphEditor, EventGraphSingleNode } from '../components/events/EventGraphEditor';
 import { EventPropertyForm } from '../components/events/EventPropertyForm';
@@ -65,9 +66,10 @@ function emptyMacro(): FreerEvent {
 
 export function EventsPage() {
   const qc = useQueryClient();
-  const { data: events = [] } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
+  const { data: events = [], dataUpdatedAt: eventsUpdatedAt } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
   const { data: actions = [] } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
   const [filter, setFilter] = useState('');
+  const [catalogTab, setCatalogTab] = useState<'all' | 'macro' | 'micro' | 'exception'>('all');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [draft, setDraft] = useState<FreerEvent | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -82,6 +84,26 @@ export function EventsPage() {
 
   const resetNavigation = () => setNavStack([]);
 
+  const hasUnsavedChanges = (): boolean => {
+    if (!draft || !selectedName) return false;
+    if (isNew) return true;
+    const server = events.find((e) => e.name === selectedName);
+    if (!server) return true;
+    return JSON.stringify(draft) !== JSON.stringify(server);
+  };
+
+  const selectFromSidebar = (name: string) => {
+    if (hasUnsavedChanges() && !window.confirm(`事件「${selectedName}」有未保存的修改，切换将丢弃。确定继续？`)) {
+      return;
+    }
+    resetNavigation();
+    setSelectedName(name);
+    setIsNew(false);
+    setChildIndex(null);
+    setExceptionIndex(null);
+    setStatus('');
+  };
+
   const navigateToEvent = (name: string, context?: OpenEventContext) => {
     if (isNew || !selectedName || selectedName === name) {
       setSelectedName(name);
@@ -89,6 +111,9 @@ export function EventsPage() {
       setChildIndex(null);
       setExceptionIndex(null);
       setStatus('');
+      return;
+    }
+    if (hasUnsavedChanges() && !window.confirm(`事件「${selectedName}」有未保存的修改，进入子事件前应先保存。确定继续？`)) {
       return;
     }
     if (draft) {
@@ -134,20 +159,36 @@ export function EventsPage() {
     setStatus('');
   };
 
-  const selectFromSidebar = (name: string) => {
-    resetNavigation();
-    setSelectedName(name);
-    setIsNew(false);
-    setChildIndex(null);
-    setExceptionIndex(null);
-    setStatus('');
-  };
   const actionNames = useMemo(() => actions.map((a) => a.name), [actions]);
 
-  const filtered = useMemo(
-    () => events.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())),
-    [events, filter],
-  );
+  const filtered = useMemo(() => {
+    let list = events;
+    // 目录 Tab 过滤
+    if (catalogTab === 'macro') list = list.filter((e) => e.event_type === 0 && !e.is_exception);
+    else if (catalogTab === 'micro') list = list.filter((e) => e.event_type === 1 && !e.is_exception);
+    else if (catalogTab === 'exception') list = list.filter((e) => e.is_exception);
+    // 搜索过滤
+    if (filter) list = list.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase()));
+    return list;
+  }, [events, filter, catalogTab]);
+
+  /** 引用检查：事件是否被其他事件引用 */
+  const referencingEvents = useMemo(() => {
+    if (!selectedName) return [];
+    return events.filter((e) => {
+      if (e.event_type !== 0) return false;
+      const refs = (e.event_list ?? []).map((c) => c.event).concat(e.exception_list ?? []);
+      return refs.includes(selectedName);
+    });
+  }, [selectedName, events]);
+
+  /** 目录 Tab 计数 */
+  const tabCounts = useMemo(() => ({
+    all: events.length,
+    macro: events.filter((e) => e.event_type === 0 && !e.is_exception).length,
+    micro: events.filter((e) => e.event_type === 1 && !e.is_exception).length,
+    exception: events.filter((e) => e.is_exception).length,
+  }), [events]);
 
   useEffect(() => {
     if (!selectedName) {
@@ -165,6 +206,25 @@ export function EventsPage() {
     const found = events.find((e) => e.name === selectedName);
     if (found && !isNew) setDraft({ ...found });
   }, [selectedName, events, isNew]);
+
+  /** 项目切换时，如果当前选中事件不在新项目的事件列表中，重置本地状态 */
+  const prevEventsKey = useRef<string>('');
+  useEffect(() => {
+    const key = `${eventsUpdatedAt}:${events.length}:${events[0]?.name ?? ''}`;
+    if (prevEventsKey.current && prevEventsKey.current !== key && selectedName) {
+      const stillExists = events.some((e) => e.name === selectedName);
+      if (!stillExists) {
+        resetNavigation();
+        setSelectedName(null);
+        setDraft(null);
+        setChildIndex(null);
+        setExceptionIndex(null);
+        setStatus('');
+      }
+    }
+    prevEventsKey.current = key;
+  }, [eventsUpdatedAt, events, selectedName]);
+
   const save = useMutation({
     mutationFn: async (payload: SavePayload) => {
       const { event, originalName } = resolveSavePayload(payload);
@@ -172,6 +232,9 @@ export function EventsPage() {
       const item = validation.events.find((v) => v.name === event.name);
       if (item && !item.valid) {
         throw new Error(item.issues.map((i) => i.message).join('；'));
+      }
+      if (item && item.warnings && item.warnings.length > 0) {
+        setStatus('警告: ' + item.warnings.map((w: ValidationIssue) => w.message).join('；'));
       }
       if (isNew && !selectedName) return api.createEvent(event);
       return api.updateEvent(originalName ?? selectedName!, event);
@@ -194,13 +257,25 @@ export function EventsPage() {
           );
         }
       }
-      setStatus('已保存');
+      if (status !== '警告') setStatus('已保存');
     },
     onError: (e: Error) => setStatus(e.message),
   });
 
   const remove = useMutation({
-    mutationFn: (name: string) => api.deleteEvent(name),
+    mutationFn: (name: string) => {
+      // 引用检查
+      const refs = referencingEvents;
+      if (refs.length > 0) {
+        const refNames = refs.map((r) => r.name).join('、');
+        if (!window.confirm(`事件「${name}」被以下事件引用：${refNames}。删除后引用将断裂，确定继续？`)) {
+          throw new Error('已取消');
+        }
+      } else if (!window.confirm(`确定删除事件「${name}」？此操作不可撤销。`)) {
+        throw new Error('已取消');
+      }
+      return api.deleteEvent(name);
+    },
     onSuccess: (_data, name) => {
       qc.invalidateQueries({ queryKey: ['events'] });
       if (name === selectedName) {
@@ -210,7 +285,9 @@ export function EventsPage() {
       }
       setStatus('已删除');
     },
-    onError: (e: Error) => setStatus(e.message),
+    onError: (e: Error) => {
+      if (e.message !== '已取消') setStatus(e.message);
+    },
   });
 
   return (
@@ -260,6 +337,24 @@ export function EventsPage() {
               <Plus className="h-3 w-3" />微
             </button>
           </div>
+        </div>
+        {/* 目录 Tab */}
+        <div className="flex gap-1 border-b border-surface-border px-2 py-1.5">
+          {(['all', 'macro', 'micro', 'exception'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={`rounded-md px-2 py-0.5 text-xs transition ${
+                catalogTab === tab
+                  ? 'bg-accent/20 text-accent'
+                  : 'text-[#6b7280] hover:text-[#e8eaed]'
+              }`}
+              onClick={() => setCatalogTab(tab)}
+            >
+              {tab === 'all' ? '全部' : tab === 'macro' ? '宏' : tab === 'micro' ? '微' : '异常'}
+              <span className="ml-1 text-[10px] opacity-60">{tabCounts[tab]}</span>
+            </button>
+          ))}
         </div>
         <ul className="flex-1 overflow-y-auto p-2 text-sm">
           {filtered.map((e) => (
@@ -328,7 +423,7 @@ export function EventsPage() {
               allEvents={events}
               actions={actionNames}
               onMacroChange={setDraft}
-              onSave={(event, originalName) => save.mutate({ event, originalName })}
+              onSave={(event, originalName) => save.mutateAsync({ event, originalName }).then(() => undefined)}
               onDelete={(name) => remove.mutate(name)}
               savePending={save.isPending}
               isNew={isNew}

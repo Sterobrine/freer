@@ -98,19 +98,29 @@ export function SettingsPage() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">日志级别</label>
-            <input
+            <select
               className="input"
               value={c.log_level}
               onChange={(e) => setDraft({ ...c, log_level: e.target.value })}
-            />
+            >
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+            </select>
           </div>
           <div>
             <label className="label">截屏模式</label>
-            <input
+            <select
               className="input"
               value={c.capture_mode}
               onChange={(e) => setDraft({ ...c, capture_mode: e.target.value })}
-            />
+            >
+              <option value="adb_pipe">adb_pipe（仅 ADB 截屏）</option>
+            </select>
+            <p className="mt-1 text-xs text-[#6b7280]">
+              当前仅 ADB 截屏可用（adb_pipe）。Win32 窗口截图不在 V2 排期中。
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -176,7 +186,13 @@ export function SettingsPage() {
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) importMut.mutate(file);
+                if (file) {
+                  if (importMode === 'replace' && !window.confirm('替换导入将覆盖所有已有事件和动作数据，此操作不可撤销。确定继续？')) {
+                    e.target.value = '';
+                    return;
+                  }
+                  importMut.mutate(file);
+                }
               }}
             />
           </label>

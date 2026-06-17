@@ -74,7 +74,17 @@ export function EventPropertyForm({ event, actions, onChange }: Props) {
 
           value={event.event_type}
 
-          onChange={(e) => set('event_type', Number(e.target.value) as 0 | 1)}
+          onChange={(e) => {
+            const newType = Number(e.target.value) as 0 | 1;
+            if (newType === event.event_type) return;
+            if (newType === 0) {
+              const { action: _a, symbol_start: _s, symbol_finish: _sf, accuracy: _ac, max_suc_run_time: _ms, default_position: _dp, gap: _g, match_type_start: _mts, match_type_finish: _mtf, roi_start: _rs, roi_finish: _rf, match_fallback_start: _mfbs, match_fallback_finish: _mff, last_resort_start: _lrs, last_resort_finish: _lrf, index_start: _is, index_finish: _if, ...macroFields } = event;
+              onChange({ ...macroFields, event_type: 0 as const, event_list: event.event_list ?? [], exception_list: event.exception_list ?? [], max_rotate_time: event.max_rotate_time ?? 50 });
+            } else {
+              const { event_list: _el, exception_list: _exl, max_rotate_time: _mrt, ...microFields } = event;
+              onChange({ ...microFields, event_type: 1 as const, action: event.action ?? '', accuracy: event.accuracy ?? 0.85, max_suc_run_time: event.max_suc_run_time ?? 5, gap: event.gap ?? [0.4, 0.6] });
+            }
+          }}
 
         >
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { FreerAction } from '../api/types';
 import {
@@ -183,13 +183,27 @@ function StepFields({
 
 export function ActionsPage() {
   const qc = useQueryClient();
-  const { data: actions = [], isLoading } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
+  const { data: actions = [], dataUpdatedAt: actionsUpdatedAt, isLoading } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
   const [editing, setEditing] = useState<FreerAction | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [error, setError] = useState('');
 
+  /** 客户端校验（Zod 风格的简单校验） */
+  function validateAction(action: FreerAction): string | null {
+    if (!action.name.trim()) return '动作名称不能为空';
+    if (action.steps.length === 0) return '至少需要一个步骤';
+    for (let i = 0; i < action.steps.length; i++) {
+      const step = action.steps[i];
+      if (step.op === 'text' && !step.value) return `步骤 #${i + 1} 文本内容不能为空`;
+      if (step.op === 'key' && !step.value) return `步骤 #${i + 1} 按键码不能为空`;
+    }
+    return null;
+  }
+
   const save = useMutation({
     mutationFn: async (action: FreerAction) => {
+      const validationError = validateAction(action);
+      if (validationError) throw new Error(validationError);
       if (isNew) return api.createAction(action);
       return api.updateAction(action.name, action);
     },
@@ -207,6 +221,21 @@ export function ActionsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['actions'] }),
     onError: (e: Error) => setError(e.message),
   });
+
+  /** 项目切换时重置编辑状态 */
+  const prevActionsKey = useRef<string>('');
+  useEffect(() => {
+    const key = `${actionsUpdatedAt}:${actions.length}`;
+    if (prevActionsKey.current && prevActionsKey.current !== key && editing) {
+      const stillExists = actions.some((a) => a.name === editing.name);
+      if (!stillExists) {
+        setEditing(null);
+        setIsNew(false);
+        setError('');
+      }
+    }
+    prevActionsKey.current = key;
+  }, [actionsUpdatedAt, actions, editing]);
 
   const updateStep = (index: number, step: ActionStep) => {
     if (!editing) return;

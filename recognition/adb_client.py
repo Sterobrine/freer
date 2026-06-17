@@ -36,8 +36,18 @@ class AdbClient:
         return result.stdout
 
     def input_text(self, text: str) -> None:
+        if not text:
+            return
+        # 安全转义：Android input text 用 %s 表示空格，%% 表示字面 %
+        # 对设备 shell 使用单引号包裹防止特殊字符解释
+        # 单引号自身通过 '\'' 转义
+        safe = text.replace('%', '%%')
+        if "'" in safe:
+            safe = "'" + safe.replace("'", "'\\''") + "'"
+        else:
+            safe = f"'{safe}'"
         result = subprocess.run(
-            self._base_cmd() + ['shell', 'input', 'text', text],
+            self._base_cmd() + ['shell', 'input', 'text', safe],
             capture_output=True,
             timeout=10,
         )

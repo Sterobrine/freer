@@ -15,6 +15,7 @@ EVENT_JSON = DATA_DIR / 'event.json'
 ACTION_JSON = DATA_DIR / 'action.json'
 COUNT_JSON = DATA_DIR / 'count.json'
 SCREENSHOT_PATH = PROJECT_ROOT / 'sc.bmp'
+DEBUG_DIR = LOG_DIR / 'debug'
 CONFIG_PATH = PROJECT_ROOT / 'config.yaml'
 
 

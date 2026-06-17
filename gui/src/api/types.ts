@@ -99,6 +99,20 @@ export type TreeNode = {
   truncated?: boolean;
 };
 
+export type ProjectMeta = {
+  id: string;
+  name: string;
+  description: string;
+  default_root_event: string;
+  tags: string[];
+  stats?: {
+    event_count: number;
+    macros: number;
+    micros: number;
+    exceptions: number;
+  };
+};
+
 export type ValidationIssue = { code: string; message: string };
 
 export type ValidationResult = {

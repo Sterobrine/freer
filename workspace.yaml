@@ -1,0 +1,12 @@
+active_project: default
+projects:
+  default:
+    name: 主项目
+    description: ''
+    default_root_event: ''
+    tags: []
+  new-project:
+    name: new-project
+    description: ''
+    default_root_event: ''
+    tags: []

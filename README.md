@@ -438,3 +438,20 @@ OpenAPI 文档：启动后访问 `http://127.0.0.1:17890/docs`
 ## 许可证
 
 未指定开源许可证，使用前请自行确认授权范围。
+
+---
+
+## 截屏通道说明 (V2)
+
+当前版本中，**识别用的截屏仅有 ADB 一条通道**：
+
+| 能力 | 实现方式 | 说明 |
+|------|----------|------|
+| **截屏** | `adb exec-out screencap -p` | 仅 ADB。无 Win32 窗口截图、无 GDI/BitBlt/DXGI 实现 |
+| **Windows 点击** | `PostMessage` → 子窗口 hwnd | 通过窗口消息模拟 |
+| **ADB 点击** | `adb shell input tap/swipe/text` | 按设备像素坐标 |
+| **坐标系** | ADB 截图像素 = 设备分辨率 | Win32 点击坐标依赖模拟器 1:1 映射，无校准层 |
+
+配置项 `capture_mode` 当前仅支持 `adb_pipe`（设置页已改为单选下拉框）。在不支持 ADB 的环境下，截图将失败并触发任务暂停。
+
+**Win32 窗口截图不在 V2 排期中**（参见 [UPGRADE_PLAN_V2.md](./UPGRADE_PLAN_V2.md) §1.3.1 与 §5C-8）。

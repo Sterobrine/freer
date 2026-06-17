@@ -24,5 +24,8 @@ class LastKnownCache:
             return []
         return list(rects)
 
+    def set_ttl(self, ttl_frames: int) -> None:
+        self.ttl_frames = ttl_frames
+
     def clear(self) -> None:
         self._entries.clear()

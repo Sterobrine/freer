@@ -100,13 +100,28 @@ class ActionEx:
         return start, end
 
     @staticmethod
+    def _interruptible_sleep(seconds, check_interrupt=None):
+        """切片睡眠，每 0.5s 检查中断"""
+        if check_interrupt is None:
+            time.sleep(seconds)
+            return
+        remaining = seconds
+        while remaining > 0:
+            if check_interrupt():
+                return False
+            chunk = min(remaining, 0.5)
+            time.sleep(chunk)
+            remaining -= chunk
+        return True
+
+    @staticmethod
     def _run_gesture(platform, hwnd, position, step):
         if len(position) == 0:
-            print('未设置手势目标')
+            logger.warning('未设置手势目标')
             return
         start, end = ActionEx._resolve_gesture_points(position, step)
         if start is None:
-            print('未设置手势目标')
+            logger.warning('未设置手势目标')
             return
         duration = float(step.get('duration', 1.0))
         if platform == 'adb':
@@ -117,7 +132,7 @@ class ActionEx:
             Tools.MacAction.unsupported(step['op'])
 
     @staticmethod
-    def execute_step(step, position, hwnd, default_gap, platform, session=None):
+    def execute_step(step, position, hwnd, default_gap, platform, session=None, check_interrupt=None):
         if session is None:
             session = _PointerSession()
         op = step['op']
@@ -128,20 +143,20 @@ class ActionEx:
             if op == 'click':
                 pt = ActionEx._resolve_point(position, int(step.get('pos', 0)))
                 if pt is None:
-                    print('未设定点击目标')
+                    logger.warning('[%s] 未设定点击目标', op)
                     return
                 Tools.WindowsAction.click(pt[0], pt[1], hwnd, button)
             elif op == 'pointer_down':
                 pt = ActionEx._resolve_pointer_point(position, step, session, op)
                 if pt is None:
-                    print('未设定按下目标')
+                    logger.warning('[%s] 未设定按下目标', op)
                     return
                 button = session.button
                 Tools.WindowsAction.pointer_down(pt[0], pt[1], hwnd, button)
             elif op == 'pointer_up':
                 pt = ActionEx._resolve_pointer_point(position, step, session, op)
                 if pt is None:
-                    print('未设定抬起目标')
+                    logger.warning('[%s] 未设定抬起目标', op)
                     return
                 button = session.button if session.active else step.get('button', 'left')
                 Tools.WindowsAction.pointer_up(pt[0], pt[1], hwnd, button)
@@ -149,7 +164,7 @@ class ActionEx:
             elif op == 'pointer_move':
                 pt = ActionEx._resolve_pointer_point(position, step, session, op)
                 if pt is None:
-                    print('未设定移动目标')
+                    logger.warning('[%s] 未设定移动目标', op)
                     return
                 Tools.WindowsAction.pointer_move(pt[0], pt[1], hwnd)
             elif op == 'drag':
@@ -157,28 +172,28 @@ class ActionEx:
             elif op == 'wait':
                 seconds = step.get('seconds', 1.0)
                 if isinstance(seconds, list):
-                    time.sleep(Tools.RandomTool.getRandomGap(seconds))
-                else:
-                    time.sleep(float(seconds))
+                    seconds = Tools.RandomTool.getRandomGap(seconds)
+                if not ActionEx._interruptible_sleep(float(seconds), check_interrupt):
+                    return
             elif op == 'key':
                 value = step.get('value', '')
                 if not value:
-                    print('未设置按键')
+                    logger.warning('[%s] 未设置按键', op)
                     return
                 Tools.WindowsAction.key_press(value, hwnd)
             elif op == 'text':
                 for c in step.get('value', ''):
                     Tools.AdbAction.input_char(c)
-                    time.sleep(Tools.RandomTool.getRandomGap(default_gap))
+                    ActionEx._interruptible_sleep(Tools.RandomTool.getRandomGap(default_gap), check_interrupt)
             else:
-                print(f'Windows 不支持步骤: {op}')
+                logger.warning('Windows 不支持步骤: %s', op)
                 return
 
         elif platform == 'adb':
             if op == 'tap':
                 pt = ActionEx._resolve_point(position, int(step.get('pos', 0)))
                 if pt is None:
-                    print('未设定点击目标')
+                    logger.warning('[%s] 未设定点击目标', op)
                     return
                 Tools.AdbAction.tap(pt[0], pt[1])
             elif op == 'swipe':
@@ -186,31 +201,31 @@ class ActionEx:
             elif op == 'wait':
                 seconds = step.get('seconds', 1.0)
                 if isinstance(seconds, list):
-                    time.sleep(Tools.RandomTool.getRandomGap(seconds))
-                else:
-                    time.sleep(float(seconds))
+                    seconds = Tools.RandomTool.getRandomGap(seconds)
+                if not ActionEx._interruptible_sleep(float(seconds), check_interrupt):
+                    return
             elif op == 'key':
                 value = step.get('value', '')
                 if not value:
-                    print('未设置按键')
+                    logger.warning('[%s] 未设置按键', op)
                     return
                 Tools.AdbAction.key_press(value)
             elif op == 'text':
                 for c in step.get('value', ''):
                     Tools.AdbAction.input_char(c)
-                    time.sleep(Tools.RandomTool.getRandomGap(default_gap))
+                    ActionEx._interruptible_sleep(Tools.RandomTool.getRandomGap(default_gap), check_interrupt)
             else:
-                print(f'ADB 不支持步骤: {op}')
+                logger.warning('ADB 不支持步骤: %s', op)
                 return
 
         elif platform == 'mac':
             Tools.MacAction.unsupported(op)
             return
         else:
-            print(f'未知平台: {platform}')
+            logger.warning('未知平台: %s', platform)
             return
 
-        time.sleep(Tools.RandomTool.getRandomGap(step_gap))
+        ActionEx._interruptible_sleep(Tools.RandomTool.getRandomGap(step_gap), check_interrupt)
 
     @staticmethod
     def GetFirstPosition(position):
@@ -220,8 +235,8 @@ class ActionEx:
         return None
 
     @staticmethod
-    def doAction(action, position, event_gap):
-        print('开始执行操作：' + action.name)
+    def doAction(action, position, event_gap, check_interrupt=None):
+        logger.info('开始执行操作: %s', action.name)
         platform = normalize_platform(getattr(action, 'platform', 'windows'))
         steps = get_action_steps(action.__dict__)
         default_gap = action.gap if action.gap is not None else [0.02, 0.03]
@@ -229,8 +244,8 @@ class ActionEx:
         for _ in range(run_time):
             session = _PointerSession()
             for step in steps:
-                ActionEx.execute_step(step, position, action.hwnd, default_gap, platform, session)
-            time.sleep(Tools.RandomTool.getRandomGap(event_gap))
+                ActionEx.execute_step(step, position, action.hwnd, default_gap, platform, session, check_interrupt)
+            ActionEx._interruptible_sleep(Tools.RandomTool.getRandomGap(event_gap), check_interrupt)
 
 
 class EventEx:
@@ -256,6 +271,16 @@ class EventEx:
         self._pause_requested = False
         self._paused = False
         self._pause_lock = threading.Condition()
+        self.exit_reason = None  # 'completed' | 'stopped' | 'paused' | 'error'
+
+        # 从配置读取引擎参数
+        from config import get_config
+        cfg = get_config()
+        self._max_consecutive_miss_frames = cfg.recognition.max_consecutive_miss_frames
+        self._miss_frame_count = 0
+        self.router.last_known.set_ttl(cfg.recognition.last_known_ttl_frames)
+        self._micro_skip_frames = 0       # 微事件重入防护计数器
+
         self.InitInfo()
         logger.info('开始创建事件树: %s', event_name)
         self.event_tree_template = self.InitEventTree(self.event_name)
@@ -338,13 +363,19 @@ class EventEx:
             exception_list = event.exception_list
             start_list = []
             for i in range(len(event_list)):
-                event_list[i]['event'] = self.InitEventTree(event_list[i]['event'])
-                if event_list[i]['event'].symbol_start is not None:
-                    start_list.append(event_list[i]['event'].symbol_start)
+                child = self.InitEventTree(event_list[i]['event'])
+                if child is None:
+                    return None
+                event_list[i]['event'] = child
+                if child.symbol_start is not None:
+                    start_list.append(child.symbol_start)
             event.symbol_start = '|'.join(start_list)
             event.inactive_list = []
             for i in range(len(exception_list)):
-                exception_list[i] = self.InitEventTree(exception_list[i])
+                exc_child = self.InitEventTree(exception_list[i])
+                if exc_child is None:
+                    return None
+                exception_list[i] = exc_child
         else:
             print('正在向事件树添加微事件"' + event_name + '"···')
             action = self.CreateObject(event.action, 1)
@@ -504,18 +535,15 @@ class EventEx:
 
     def DoMicroEvent(self):
         if self.cursor.default_position is not None:
-            position = self.cursor.default_position  # 如果默认点击位置不为空，使用默认点击位置
-            tmp = []
-            i = 0
-            while i < len(position):
-                tmp.append([0, position[i][0], position[i][1], position[i+1][0], position[i+1][1]])
-                i += 2
-            position = tmp
+            from recognition.position_utils import default_position_to_rects
+            rects = default_position_to_rects(self.cursor.default_position)
+            position = [r.to_legacy() for r in rects]
         else:
             position = self.GetPosition(self.cursor.symbol_start, kind='start')
-        print(self.cursor.name, position)
-        ActionEx.doAction(self.cursor.action, position, self.cursor.gap)
-        print('微事件"' + self.cursor.name + '"已执行')
+        logger.info('微事件 %s 位置: %s', self.cursor.name, position)
+        ActionEx.doAction(self.cursor.action, position, self.cursor.gap,
+                          check_interrupt=lambda: self._stop_requested or self._pause_requested)
+        logger.info('微事件 "%s" 已执行', self.cursor.name)
 
     def DoGrandEvent(self):
         if self.cursor.has_rotate_time > self.cursor.max_rotate_time:
@@ -568,7 +596,7 @@ class EventEx:
                 self.RecoverExceptionEvent()
                 self._pop_event()
             else:
-                self.run_time -= 1
+                self.run_time = max(0, self.run_time - 1)
             return True
         return False
 
@@ -582,32 +610,61 @@ class EventEx:
             self.run_time = 1  # 如果不相同，将当前事件设为上一个执行事件
 
     def RecoverExceptionEvent(self):
-        if self.cursor.is_exception and self.cursor.event_type == 0:
-            event_list = []
-            for i in range(len(self.cursor.inactive_list)):
-                self.cursor.inactive_list[i]['has_run_time'] = 0
-                event_list.append(self.cursor.inactive_list[i])
-            self.cursor.event_list = event_list + self.cursor.event_list
-            self.cursor.inactive_list = []
+        if not self.cursor.is_exception:
+            return
+        # 查找持有 inactive_list 的父宏事件
+        target = self.cursor
+        if target.event_type != 0 and len(self.stack) >= 2:
+            parent = self.stack[-2]
+            if parent.event_type == 0:
+                target = parent
+        if target.event_type != 0:
+            return
+        # 将 inactive_list 复原到 event_list
+        for item in target.inactive_list:
+            item['has_run_time'] = 0
+            target.event_list.append(item)
+        target.inactive_list = []
 
     def _pop_event(self):
         self.router.last_known.clear()
         self.stack.pop()
 
+    def _save_debug_screenshot(self):
+        """暂停时将当前帧存到 logs/debug/ 目录"""
+        if self.frame is None or self.frame.image is None:
+            return
+        try:
+            import cv2
+            import os
+            from datetime import datetime
+            debug_dir = paths.DEBUG_DIR
+            os.makedirs(str(debug_dir), exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            name = f'pause_{ts}_{self.cursor.name}.bmp' if self.cursor else f'pause_{ts}.bmp'
+            cv2.imwrite(str(debug_dir / name), self.frame.image)
+            logger.info('调试截图已保存: %s', name)
+        except Exception as exc:
+            logger.warning('调试截图保存失败: %s', exc)
+
     def EventDispatch(self):
         while len(self.stack) > 0:
             if self._stop_requested:
                 logger.info('任务收到停止请求')
+                self.exit_reason = 'stopped'
                 return
             self._wait_if_paused()
             if self._stop_requested:
                 logger.info('任务收到停止请求')
+                self.exit_reason = 'stopped'
                 return
             try:
                 self.frame = FrameContext.capture(self.adb_client)
             except (TaskPausedError, ScreenshotError) as exc:
                 logger.warning('任务暂停: %s', exc)
+                self._save_debug_screenshot()
                 self.stack.clear()
+                self.exit_reason = 'paused'
                 return
 
             logger.debug('正在执行: %s', self.GetEventRoute())
@@ -619,11 +676,14 @@ class EventEx:
                 self.GetWindowHwnd()
             except TaskPausedError as exc:
                 logger.warning('任务暂停: %s', exc)
+                self._save_debug_screenshot()
                 self.stack.clear()
+                self.exit_reason = 'paused'
                 return
             try:
                 if self.EventIsFinish():
                     logger.info('事件完成: %s', self.cursor.name)
+                    self._miss_frame_count = 0
                     self.CountAndClearRedundant()
                     self.RecoverExceptionEvent()
                     self._pop_event()
@@ -633,22 +693,48 @@ class EventEx:
                         '宏事件 %s 空转(%s/%s)',
                         self.cursor.name, self.cursor.has_rotate_time, self.cursor.max_rotate_time,
                     )
+                    prev_rotate = self.cursor.has_rotate_time
                     self.DoGrandEvent()
+                    # 宏事件无子事件可执行 → miss 帧
+                    if self.cursor.has_rotate_time > prev_rotate:
+                        self._miss_frame_count += 1
+                    else:
+                        self._miss_frame_count = 0
                 else:
+                    # 微事件重入防护：执行后跳过若干帧，避免起始标志持续存在时的连点
+                    if self._micro_skip_frames > 0 and self.cursor.symbol_finish is None:
+                        self._micro_skip_frames -= 1
+                        continue
                     logger.debug(
                         '微事件 %s (%s/%s)',
                         self.cursor.name, self.run_time, self.cursor.max_suc_run_time,
                     )
                     self.DoMicroEvent()
+                    # 无 symbol_finish 的微事件执行后设重入冷却
+                    if self.cursor.symbol_finish is None:
+                        self._micro_skip_frames = 3
+                    self._miss_frame_count = 0
             except TaskPausedError as exc:
                 logger.warning('任务暂停: %s', exc)
+                self._save_debug_screenshot()
                 self.stack.clear()
+                self.exit_reason = 'paused'
                 return
+
+            # 连续未命中检测
+            if self._miss_frame_count >= self._max_consecutive_miss_frames > 0:
+                logger.warning('连续 %d 帧未命中任一事件，任务暂停', self._miss_frame_count)
+                self._save_debug_screenshot()
+                self.stack.clear()
+                self.exit_reason = 'paused'
+                return
+        self.exit_reason = 'completed'
 
     def Reset(self):
         self.run_time = 0
         self.pre_cursor = None
         self._finish_streak = 0
+        self._miss_frame_count = 0
         self._stop_requested = False
         self._pause_requested = False
         self._paused = False

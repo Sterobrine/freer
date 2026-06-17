@@ -225,9 +225,16 @@ def validate_event(
     if check_assets and event_type == 1:
         for sym_field in ('symbol_start', 'symbol_finish'):
             sym = event.get(sym_field)
-            if isinstance(sym, str) and sym and '|' not in sym and not sym.startswith('#'):
+            if isinstance(sym, str) and sym and not sym.startswith('#'):
                 for part in sym.split('|'):
-                    p = Path(part) if Path(part).is_absolute() else paths.PROJECT_ROOT / part
+                    if part.startswith('#'):
+                        continue
+                    if Path(part).is_absolute():
+                        p = Path(part)
+                    else:
+                        # 优先项目 img/，再回退全局路径
+                        candidates = [paths.IMG_DIR / part, paths.PROJECT_ROOT / part]
+                        p = next((c for c in candidates if c.exists()), candidates[0])
                     if not p.exists():
                         warnings.append({
                             'code': 'missing_template',

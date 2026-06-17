@@ -13,6 +13,7 @@ class ScreenshotError(Exception):
 
 
 _frame_counter = 0
+_capture_mode_warned = False
 
 
 @dataclass
@@ -24,12 +25,33 @@ class FrameContext:
     match_elapsed_ms: float = 0.0
 
     @classmethod
+    def _check_capture_mode(cls) -> None:
+        """检查 capture_mode 配置，非 adb_pipe 时仅首次警告。"""
+        global _capture_mode_warned
+        if _capture_mode_warned:
+            return
+        try:
+            from config import get_config
+            capture_mode = get_config().capture_mode
+        except Exception:
+            capture_mode = 'adb_pipe'
+        if capture_mode != 'adb_pipe':
+            from freer_log import get_logger
+            get_logger('freer.capture').warning(
+                '不支持的 capture_mode: %s，回退到 adb_pipe', capture_mode,
+            )
+        _capture_mode_warned = True
+
+    @classmethod
     def capture(cls, adb_client: Optional[AdbClient] = None) -> FrameContext:
         import cv2
         import numpy as np
 
         global _frame_counter
         _frame_counter += 1
+
+        cls._check_capture_mode()
+
         client = adb_client or AdbClient()
         try:
             raw = client.screencap()

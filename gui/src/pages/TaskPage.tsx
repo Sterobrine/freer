@@ -8,7 +8,7 @@ export function TaskPage() {
   const [rootEvent, setRootEvent] = useState('');
   const [repeat, setRepeat] = useState(1);
 
-  const { data: events = [] } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
+  const { data: events = [], dataUpdatedAt: eventsUpdatedAt } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
   const macroRoots = useMemo(
     () => events.filter((e) => e.event_type === 0 && !e.is_exception),
     [events],
@@ -27,12 +27,28 @@ export function TaskPage() {
   const isActive = status?.status === 'running' || status?.status === 'paused' || status?.status === 'stopping';
   const { logs, connected, clear } = useLogWebSocket(isActive || true);
 
+  /** 项目切换或事件列表更新时，重置 rootEvent 到有效值 */
   useEffect(() => {
-    if (!rootEvent && macroRoots[0]) setRootEvent(macroRoots[0].name);
-  }, [macroRoots, rootEvent]);
+    if (macroRoots.length === 0) {
+      setRootEvent('');
+      return;
+    }
+    if (!rootEvent || !macroRoots.some((e) => e.name === rootEvent)) {
+      setRootEvent(macroRoots[0].name);
+    }
+  }, [macroRoots, rootEvent, eventsUpdatedAt]);
 
   const start = useMutation({
-    mutationFn: () => api.startTask(rootEvent, repeat),
+    mutationFn: async () => {
+      // 预校验：验证根宏事件
+      const validation = await api.validateEvent(rootEvent);
+      if (!validation.valid) {
+        const msgs = validation.issues.map((i) => i.message).join('；');
+        throw new Error(`根宏事件校验失败: ${msgs}`);
+      }
+      const result = await api.startTask(rootEvent, repeat);
+      return result;
+    },
     onSuccess: () => statusQ.refetch(),
   });
   const stop = useMutation({ mutationFn: api.stopTask, onSuccess: () => statusQ.refetch() });
@@ -40,6 +56,7 @@ export function TaskPage() {
   const resume = useMutation({ mutationFn: api.resumeTask, onSuccess: () => statusQ.refetch() });
 
   const st = status?.status ?? 'idle';
+  const startError = start.error || pause.error || resume.error || stop.error;
 
   return (
     <div className="grid h-[calc(100vh-57px)] grid-cols-2 gap-0">
@@ -108,6 +125,7 @@ export function TaskPage() {
             <span className="truncate pl-4 text-right text-xs">{status?.route ?? '—'}</span>
           </div>
           {status?.error && <p className="text-red-300">{status.error}</p>}
+          {startError && <p className="text-red-300">操作失败: {startError instanceof Error ? startError.message : String(startError)}</p>}
         </div>
       </div>
 

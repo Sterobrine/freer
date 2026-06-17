@@ -24,8 +24,9 @@ class TaskRunner:
             return 'paused'
         if self._status == 'stopping':
             return 'stopping'
-        if self._status in ('running', 'paused'):
+        if self._status in ('running',):
             return 'running'
+        # 'completed', 'stopped', 'paused', 'error' pass through directly
         return self._status
 
     def snapshot(self) -> Dict[str, Any]:
@@ -66,9 +67,16 @@ class TaskRunner:
                     self._runner = runner
                 runner.Start()
                 with self._lock:
-                    if runner._stop_requested:
+                    reason = getattr(runner, 'exit_reason', None)
+                    if reason == 'stopped':
                         self._status = 'stopped'
                         logger.info('任务已停止: %s', event_name)
+                    elif reason == 'paused':
+                        self._status = 'paused'
+                        logger.warning('任务因异常暂停: %s', event_name)
+                    elif reason == 'error':
+                        self._status = 'error'
+                        logger.error('任务异常结束: %s', event_name)
                     else:
                         self._status = 'completed'
                         logger.info('任务完成: %s', event_name)

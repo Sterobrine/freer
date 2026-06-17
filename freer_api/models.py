@@ -15,6 +15,7 @@ class ConfigUpdateRequest(BaseModel):
     capture_mode: Optional[str] = None
     log_level: Optional[str] = None
     log_dir: Optional[str] = None
+    default_action_platform: Optional[str] = None
     api_host: Optional[str] = None
     api_port: Optional[int] = None
     max_consecutive_miss_frames: Optional[int] = None
@@ -50,3 +51,9 @@ class ExportRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     mode: str = Field(default='merge')
+
+
+class CropRequest(BaseModel):
+    image: str = 'capture'  # 'capture' or base64
+    rect: List[int]         # [x1, y1, x2, y2]
+    name: Optional[str] = None

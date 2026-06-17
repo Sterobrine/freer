@@ -30,6 +30,7 @@ class FreerConfig:
     capture_mode: str = 'adb_pipe'
     log_level: str = 'INFO'
     log_dir: str = 'logs'
+    default_action_platform: str = 'windows'
     api: ApiConfig = field(default_factory=ApiConfig)
     recognition: RecognitionConfig = field(default_factory=RecognitionConfig)
 
@@ -55,6 +56,7 @@ def _defaults_dict() -> Dict[str, Any]:
         'capture_mode': 'adb_pipe',
         'log_level': 'INFO',
         'log_dir': 'logs',
+        'default_action_platform': 'windows',
         'api': {'host': '127.0.0.1', 'port': 17890},
         'recognition': {
             'max_consecutive_miss_frames': 30,
@@ -73,6 +75,7 @@ def _dict_to_config(data: Dict[str, Any]) -> FreerConfig:
         capture_mode=str(data.get('capture_mode', 'adb_pipe')),
         log_level=str(data.get('log_level', 'INFO')),
         log_dir=str(data.get('log_dir', 'logs')),
+        default_action_platform=str(data.get('default_action_platform', 'windows')),
         api=ApiConfig(
             host=str(api_data.get('host', '127.0.0.1')),
             port=int(api_data.get('port', 17890)),
@@ -115,6 +118,7 @@ def save_config(config: FreerConfig, config_path: Optional[Path] = None) -> None
         'capture_mode': config.capture_mode,
         'log_level': config.log_level,
         'log_dir': config.log_dir,
+        'default_action_platform': config.default_action_platform,
         'api': {'host': config.api.host, 'port': config.api.port},
         'recognition': {
             'max_consecutive_miss_frames': config.recognition.max_consecutive_miss_frames,

@@ -413,7 +413,7 @@ export function EventGraphEditor({
 
   const saveAllPatches = async () => {
     for (const [name, event] of patches) {
-      onSave(event, name);
+      await onSave(event, name);
     }
     setPatches(new Map());
   };
@@ -542,6 +542,9 @@ export function EventGraphEditor({
               {macro.name !== panelEvent?.name && (
                 <p className="truncate text-xs text-[#6b7280]">画布根：{macro.name}</p>
               )}
+              {cycle && cycleNodes.size > 1 && (
+                <p className="text-xs text-red-400">环检测已启用：存在循环引用，保存已禁用</p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {canDelete && panelSourceName && (
@@ -563,7 +566,7 @@ export function EventGraphEditor({
                       setPanelSourceName(panelEvent.name);
                     }
                   }}
-                  disabled={savePending}
+                  disabled={savePending || (!!cycle && cycleNodes.size > 1 && !panelSourceName)}
                 >
                   <Save className="h-3.5 w-3.5" />
                 </button>
