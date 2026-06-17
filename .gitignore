@@ -7,3 +7,22 @@ src-tauri/target/
 .DS_Store
 *.log
 logs/
+
+# Python bytecode cache
+**/__pycache__/
+
+# Build / distribution artifacts
+build/
+dist/
+
+# Test cache
+.pytest_cache/
+
+# Tauri generated schemas and sidecar binaries
+src-tauri/gen/
+src-tauri/binaries/
+
+# Runtime data and user projects
+data/
+projects/
+link-log.txt
