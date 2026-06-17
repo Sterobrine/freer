@@ -41,14 +41,25 @@ export const grandEventSchema = z.object({
   exception_list: z.array(z.string()).optional(),
 });
 
+const actionStepSchema = z.object({
+  op: z.string().min(1),
+  pos: z.coerce.number().int().optional(),
+  button: z.enum(['left', 'right', 'middle']).optional(),
+  from_pos: z.coerce.number().int().optional(),
+  to_pos: z.coerce.number().int().optional(),
+  offset: z.tuple([z.coerce.number(), z.coerce.number()]).optional(),
+  duration: z.coerce.number().optional(),
+  seconds: z.coerce.number().optional(),
+  value: z.string().optional(),
+  gap: z.tuple([z.coerce.number(), z.coerce.number()]).optional(),
+});
+
 export const actionSchema = z.object({
   name: z.string().min(1),
-  action_type: z.coerce.number().int(),
+  platform: z.enum(['windows', 'mac', 'adb']).default('windows'),
   run_time: z.coerce.number().int().min(1),
-  wait_time: z.coerce.number().nullable().optional(),
-  duration: z.coerce.number().nullable().optional(),
   gap: z.tuple([z.coerce.number(), z.coerce.number()]).optional(),
-  text: z.string().optional(),
+  steps: z.array(actionStepSchema).min(1),
 });
 
 export function parseRoi(text: string): number[] | undefined {

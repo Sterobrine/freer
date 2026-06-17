@@ -7,6 +7,7 @@ cd "$ROOT"
 pip install pyinstaller
 pyinstaller \
   --onefile \
+  --noconsole \
   --name freer-engine \
   --paths "$ROOT" \
   --hidden-import=uvicorn \

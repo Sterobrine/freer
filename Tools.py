@@ -148,39 +148,211 @@ class FileTool:
         file.close()
 
 
+class WindowsAction:
+    @staticmethod
+    def _down(button='left'):
+        import win32con
+        return {
+            'left': (win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON),
+            'right': (win32con.WM_RBUTTONDOWN, win32con.MK_RBUTTON),
+            'middle': (win32con.WM_MBUTTONDOWN, win32con.MK_MBUTTON),
+        }.get(button, (win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON))
+
+    @staticmethod
+    def _up(button='left'):
+        import win32con
+        return {
+            'left': (win32con.WM_LBUTTONUP, win32con.MK_LBUTTON),
+            'right': (win32con.WM_RBUTTONUP, 0),
+            'middle': (win32con.WM_MBUTTONUP, 0),
+        }.get(button, (win32con.WM_LBUTTONUP, win32con.MK_LBUTTON))
+
+    @staticmethod
+    def _pack(x, y):
+        return y << 16 | x
+
+    @staticmethod
+    def pointer_down(x, y, hwnd, button='left'):
+        if not _WIN32:
+            print('Windows 按下需要 Win32 环境')
+            return
+        import win32api
+        msg, wparam = WindowsAction._down(button)
+        win32api.PostMessage(hwnd, msg, wparam, WindowsAction._pack(x, y))
+
+    @staticmethod
+    def pointer_up(x, y, hwnd, button='left'):
+        if not _WIN32:
+            print('Windows 抬起需要 Win32 环境')
+            return
+        import win32api
+        msg, wparam = WindowsAction._up(button)
+        win32api.PostMessage(hwnd, msg, wparam, WindowsAction._pack(x, y))
+
+    @staticmethod
+    def pointer_move(x, y, hwnd):
+        if not _WIN32:
+            return
+        import win32api
+        import win32con
+        win32api.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, WindowsAction._pack(x, y))
+
+    @staticmethod
+    def click(x, y, hwnd, button='left'):
+        WindowsAction.pointer_down(x, y, hwnd, button)
+        WindowsAction.pointer_up(x, y, hwnd, button)
+
+    @staticmethod
+    def perform_drag(hwnd, x1, y1, x2, y2, duration):
+        WindowsAction.pointer_down(x1, y1, hwnd, 'left')
+        if x1 == x2 and y1 == y2:
+            time.sleep(duration)
+            WindowsAction.pointer_up(x2, y2, hwnd, 'left')
+        elif x1 == x2:
+            speed = duration / abs(y1 - y2) if y1 != y2 else duration
+            step = -1 if y1 > y2 else 1
+            for y in range(y1, y2, step):
+                WindowsAction.pointer_move(x1, y, hwnd)
+                time.sleep(speed)
+            WindowsAction.pointer_up(x2, y2, hwnd, 'left')
+        elif y1 == y2:
+            speed = duration / abs(x1 - x2) if x1 != x2 else duration
+            step = -1 if x1 > x2 else 1
+            for x in range(x1, x2, step):
+                WindowsAction.pointer_move(x, y1, hwnd)
+                time.sleep(speed)
+            WindowsAction.pointer_up(x2, y2, hwnd, 'left')
+        else:
+            k = (y1 - y2) / (x1 - x2)
+            b = y1 - k * x1
+            speed = duration / abs(x1 - x2) if x1 != x2 else duration
+            step = -1 if x1 > x2 else 1
+            for x in range(x1, x2, step):
+                y = int(k * x + b)
+                WindowsAction.pointer_move(x, y, hwnd)
+                time.sleep(speed)
+            WindowsAction.pointer_up(x2, y2, hwnd, 'left')
+
+    @staticmethod
+    def key_press(key, hwnd):
+        if not _WIN32:
+            return
+        import win32api
+        import win32con
+        vk = int(key) if str(key).isdigit() else getattr(win32con, str(key), None)
+        if vk is None:
+            print(f'未知按键: {key}')
+            return
+        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
+        win32api.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
+
+
+class AdbAction:
+    @staticmethod
+    def tap(x, y):
+        _default_adb_client.tap(x, y)
+
+    @staticmethod
+    def swipe(x1, y1, x2, y2, duration_sec):
+        ms = max(int(duration_sec * 1000), 50)
+        _default_adb_client.swipe(x1, y1, x2, y2, ms)
+
+    @staticmethod
+    def key_press(key):
+        _default_adb_client.keyevent(str(key))
+
+    @staticmethod
+    def input_char(c):
+        _default_adb_client.input_text(c)
+
+
+class MacAction:
+    @staticmethod
+    def unsupported(op):
+        print(f'macOS 操作「{op}」尚未实现，请在 Mac 上接入 Quartz/CGEvent 后使用')
+
+
 class ActionTool:
     @staticmethod
     def doClick(x, y, hwnd):
         if _WIN32:
-            long_position = y << 16 | x
-            win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
-            win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+            WindowsAction.click(x, y, hwnd, 'left')
         else:
-            _default_adb_client.tap(x, y)
+            AdbAction.tap(x, y)
 
     @staticmethod
     def LeftDown(x, y, hwnd):
         if _WIN32:
-            long_position = y << 16 | x
-            win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, long_position)
+            WindowsAction.pointer_down(x, y, hwnd, 'left')
 
     @staticmethod
     def MoveTo(x, y, hwnd):
         if _WIN32:
-            long_position = y << 16 | x
-            win32api.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, long_position)
+            WindowsAction.pointer_move(x, y, hwnd)
 
     @staticmethod
     def LeftUp(x, y, hwnd):
         if _WIN32:
-            long_position = y << 16 | x
-            win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, win32con.MK_LBUTTON, long_position)
+            WindowsAction.pointer_up(x, y, hwnd, 'left')
+
+    @staticmethod
+    def RightClick(x, y, hwnd):
+        if _WIN32:
+            WindowsAction.click(x, y, hwnd, 'right')
         else:
-            _default_adb_client.tap(x, y)
+            AdbAction.tap(x, y)
+
+    @staticmethod
+    def DoubleClick(x, y, hwnd):
+        if _WIN32:
+            WindowsAction.click(x, y, hwnd, 'left')
+            time.sleep(0.05)
+            WindowsAction.click(x, y, hwnd, 'left')
+        else:
+            AdbAction.tap(x, y)
+            time.sleep(0.05)
+            AdbAction.tap(x, y)
+
+    @staticmethod
+    def MiddleClick(x, y, hwnd):
+        if _WIN32:
+            WindowsAction.click(x, y, hwnd, 'middle')
+        else:
+            AdbAction.tap(x, y)
+
+    @staticmethod
+    def Scroll(x, y, hwnd, notches):
+        delta = int(notches * 120)
+        if _WIN32:
+            import win32api
+            import win32con
+            long_position = y << 16 | x
+            wparam = (delta & 0xFFFF) << 16
+            win32api.PostMessage(hwnd, win32con.WM_MOUSEWHEEL, wparam, long_position)
+        else:
+            dy = -40 if notches > 0 else 40
+            steps = abs(int(notches)) or 1
+            for _ in range(steps):
+                AdbAction.swipe(x, y, x, y + dy, 0.1)
+                time.sleep(0.05)
+
+    @staticmethod
+    def LongPress(x, y, hwnd, duration_sec):
+        if _WIN32:
+            WindowsAction.perform_drag(hwnd, x, y, x, y, duration_sec)
+        else:
+            AdbAction.swipe(x, y, x, y, duration_sec)
+
+    @staticmethod
+    def KeyPress(key, hwnd):
+        if _WIN32:
+            WindowsAction.key_press(key, hwnd)
+        else:
+            AdbAction.key_press(key)
 
     @staticmethod
     def InputCharacter(c):
-        _default_adb_client.input_text(c)
+        AdbAction.input_char(c)
 
 
 class RandomTool:

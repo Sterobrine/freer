@@ -1,22 +1,185 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../api/client';
 import type { FreerAction } from '../api/types';
+import {
+  CLICK_BUTTON_LABELS,
+  PLATFORM_LABELS,
+  PLATFORM_OPS,
+  PLATFORM_PRESETS,
+  STEP_LABELS,
+  emptyStep,
+  isGestureOp,
+  isPointerOp,
+  summarizeSteps,
+  stepUsesOffset,
+  type ActionPlatform,
+  type ActionStep,
+  type ActionStepOp,
+} from '../lib/actionSteps';
 
-const ACTION_TYPES: Record<number, string> = {
-  1: '左键单击',
-  3: '拖拽',
-  4: '等待',
-  5: '输入文字',
-};
-
-const emptyAction = (): FreerAction => ({
+const emptyAction = (platform: ActionPlatform = 'windows'): FreerAction => ({
   name: '',
-  action_type: 1,
+  platform,
   run_time: 1,
   gap: [0.02, 0.03],
+  steps: [emptyStep(platform)],
 });
+
+function StepFields({
+  step,
+  platform,
+  onChange,
+}: {
+  step: ActionStep;
+  platform: ActionPlatform;
+  onChange: (step: ActionStep) => void;
+}) {
+  if (isPointerOp(step.op)) {
+    const showButton = step.op === 'click' || step.op === 'pointer_down' || step.op === 'pointer_up';
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="label text-xs">位置索引</label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            value={step.pos ?? 0}
+            onChange={(e) => onChange({ ...step, pos: Number(e.target.value) })}
+          />
+        </div>
+        {showButton && platform !== 'adb' && (
+          <div>
+            <label className="label text-xs">鼠标按键</label>
+            <select
+              className="input"
+              value={step.button ?? 'left'}
+              onChange={(e) =>
+                onChange({ ...step, button: e.target.value as 'left' | 'right' | 'middle' })
+              }
+            >
+              {Object.entries(CLICK_BUTTON_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isGestureOp(step.op)) {
+    const useOffset = stepUsesOffset(step);
+    return (
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label text-xs">起点索引</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={step.from_pos ?? 0}
+              onChange={(e) => onChange({ ...step, from_pos: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="label text-xs">时长 (s)</label>
+            <input
+              className="input"
+              type="number"
+              step={0.1}
+              value={step.duration ?? 1}
+              onChange={(e) => onChange({ ...step, duration: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-[#9aa3b2]">
+          <input
+            type="checkbox"
+            checked={useOffset}
+            onChange={(e) => {
+              if (e.target.checked) {
+                onChange({ ...step, offset: step.offset ?? [0, -200], to_pos: undefined });
+              } else {
+                const { offset: _o, ...rest } = step;
+                onChange({ ...rest, to_pos: rest.to_pos ?? 1 });
+              }
+            }}
+          />
+          使用相对偏移（单识别区域时滑动/长按）
+        </label>
+        {useOffset ? (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label text-xs">偏移 X</label>
+              <input
+                className="input"
+                type="number"
+                value={step.offset?.[0] ?? 0}
+                onChange={(e) =>
+                  onChange({ ...step, offset: [Number(e.target.value), step.offset?.[1] ?? 0] })
+                }
+              />
+            </div>
+            <div>
+              <label className="label text-xs">偏移 Y</label>
+              <input
+                className="input"
+                type="number"
+                value={step.offset?.[1] ?? 0}
+                onChange={(e) =>
+                  onChange({ ...step, offset: [step.offset?.[0] ?? 0, Number(e.target.value)] })
+                }
+              />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label className="label text-xs">终点索引（与起点相同 = 长按）</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={step.to_pos ?? 1}
+              onChange={(e) => onChange({ ...step, to_pos: Number(e.target.value) })}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (step.op === 'wait') {
+    return (
+      <div>
+        <label className="label text-xs">等待秒数</label>
+        <input
+          className="input"
+          type="number"
+          step={0.01}
+          value={step.seconds ?? 1}
+          onChange={(e) => onChange({ ...step, seconds: Number(e.target.value) })}
+        />
+        <p className="mt-1 text-xs text-[#6b7280]">适合短延迟（如双击间隔 &lt;1s）。等界面变化请用事件结束标志。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="label text-xs">{step.op === 'key' ? '按键码' : '文本内容'}</label>
+      <input
+        className="input"
+        placeholder={step.op === 'key' ? 'KEYCODE_BACK 或 4' : ''}
+        value={step.value ?? ''}
+        onChange={(e) => onChange({ ...step, value: e.target.value })}
+      />
+    </div>
+  );
+}
 
 export function ActionsPage() {
   const qc = useQueryClient();
@@ -45,7 +208,34 @@ export function ActionsPage() {
     onError: (e: Error) => setError(e.message),
   });
 
+  const updateStep = (index: number, step: ActionStep) => {
+    if (!editing) return;
+    const steps = [...editing.steps];
+    steps[index] = step;
+    setEditing({ ...editing, steps });
+  };
+
+  const moveStep = (index: number, dir: -1 | 1) => {
+    if (!editing) return;
+    const next = index + dir;
+    if (next < 0 || next >= editing.steps.length) return;
+    const steps = [...editing.steps];
+    [steps[index], steps[next]] = [steps[next], steps[index]];
+    setEditing({ ...editing, steps });
+  };
+
+  const changePlatform = (platform: ActionPlatform) => {
+    if (!editing) return;
+    setEditing({
+      ...editing,
+      platform,
+      steps: [emptyStep(platform)],
+    });
+  };
+
   if (isLoading) return <div className="p-6 text-sm text-[#9aa3b2]">加载动作…</div>;
+
+  const platformOps = editing ? PLATFORM_OPS[editing.platform] : PLATFORM_OPS.windows;
 
   return (
     <div className="flex h-[calc(100vh-57px)]">
@@ -72,11 +262,25 @@ export function ActionsPage() {
                 editing?.name === a.name ? 'bg-surface-raised' : 'hover:bg-surface-raised/60'
               }`}
             >
-              <button type="button" className="flex-1 text-left" onClick={() => { setEditing({ ...a }); setIsNew(false); }}>
-                {a.name}
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left"
+                onClick={() => {
+                  const platform = a.platform ?? 'windows';
+                  setEditing({
+                    ...a,
+                    platform,
+                    steps: a.steps?.length ? a.steps : [emptyStep(platform)],
+                  });
+                  setIsNew(false);
+                }}
+              >
+                <span className="block truncate">{a.name}</span>
+                <span className="text-xs text-[#6b7280]">
+                  {summarizeSteps(a.steps ?? [], a.platform ?? 'windows')}
+                </span>
               </button>
-              <span className="mr-2 text-xs text-[#6b7280]">{ACTION_TYPES[a.action_type] ?? a.action_type}</span>
-              <button type="button" className="text-[#9aa3b2] hover:text-red-300" onClick={() => remove.mutate(a.name)}>
+              <button type="button" className="ml-1 text-[#9aa3b2] hover:text-red-300" onClick={() => remove.mutate(a.name)}>
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </li>
@@ -86,9 +290,11 @@ export function ActionsPage() {
 
       <div className="flex-1 overflow-y-auto p-6">
         {!editing ? (
-          <p className="text-sm text-[#9aa3b2]">选择或新建动作进行编辑</p>
+          <p className="text-sm text-[#9aa3b2]">
+            选择或新建动作。先选平台，再编排该平台支持的原子步骤。
+          </p>
         ) : (
-          <div className="mx-auto max-w-lg space-y-4">
+          <div className="mx-auto max-w-xl space-y-4">
             <h3 className="flex items-center gap-2 font-semibold">
               <Pencil className="h-4 w-4" />
               {isNew ? '新建动作' : editing.name}
@@ -104,88 +310,146 @@ export function ActionsPage() {
               />
             </div>
             <div>
-              <label className="label">类型</label>
+              <label className="label">平台</label>
               <select
                 className="input"
-                value={editing.action_type}
-                onChange={(e) => setEditing({ ...editing, action_type: Number(e.target.value) })}
+                value={editing.platform}
+                onChange={(e) => changePlatform(e.target.value as ActionPlatform)}
               >
-                {Object.entries(ACTION_TYPES).map(([k, v]) => (
+                {Object.entries(PLATFORM_LABELS).map(([k, v]) => (
                   <option key={k} value={k}>{v}</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-[#6b7280]">
+                {editing.platform === 'windows' && '通过 Win32 窗口消息操作模拟器窗口，支持按下/抬起/移动分离。text 步骤当前仍经 ADB 输入。'}
+                {editing.platform === 'adb' && '通过 adb shell input 操作设备，仅支持 tap / swipe 成品手势。'}
+                {editing.platform === 'mac' && 'macOS 执行器尚未实现；步骤格式与 Windows 相同，保存后暂无法执行。'}
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="label">执行次数</label>
+                <label className="label">整套重复次数</label>
                 <input
                   className="input"
                   type="number"
+                  min={1}
                   value={editing.run_time}
                   onChange={(e) => setEditing({ ...editing, run_time: Number(e.target.value) })}
                 />
+                <p className="mt-1 text-xs text-[#6b7280]">
+                  单次微事件触发内，整套步骤重复的次数。双击请用「点击 → wait → 点击」编排，勿设 run_time=2。
+                </p>
               </div>
-              {editing.action_type === 4 && (
-                <div>
-                  <label className="label">等待秒数</label>
+              <div>
+                <label className="label">步骤间隔（默认）</label>
+                <div className="flex gap-1">
                   <input
                     className="input"
                     type="number"
-                    step="0.1"
-                    value={editing.wait_time ?? 1}
-                    onChange={(e) => setEditing({ ...editing, wait_time: Number(e.target.value) })}
+                    step={0.01}
+                    value={editing.gap?.[0] ?? 0}
+                    onChange={(e) =>
+                      setEditing({ ...editing, gap: [Number(e.target.value), editing.gap?.[1] ?? 0] })
+                    }
                   />
-                </div>
-              )}
-              {editing.action_type === 3 && (
-                <div>
-                  <label className="label">拖拽时长 (s)</label>
                   <input
                     className="input"
                     type="number"
-                    step="0.1"
-                    value={editing.duration ?? 1}
-                    onChange={(e) => setEditing({ ...editing, duration: Number(e.target.value) })}
+                    step={0.01}
+                    value={editing.gap?.[1] ?? 0}
+                    onChange={(e) =>
+                      setEditing({ ...editing, gap: [editing.gap?.[0] ?? 0, Number(e.target.value)] })
+                    }
                   />
                 </div>
-              )}
-            </div>
-            {editing.action_type === 5 && (
-              <div>
-                <label className="label">输入文本</label>
-                <input
-                  className="input"
-                  value={editing.text ?? ''}
-                  onChange={(e) => setEditing({ ...editing, text: e.target.value })}
-                />
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">间隔下限</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  value={editing.gap?.[0] ?? 0}
-                  onChange={(e) =>
-                    setEditing({ ...editing, gap: [Number(e.target.value), editing.gap?.[1] ?? 0] })
-                  }
-                />
-              </div>
-              <div>
-                <label className="label">间隔上限</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  value={editing.gap?.[1] ?? 0}
-                  onChange={(e) =>
-                    setEditing({ ...editing, gap: [editing.gap?.[0] ?? 0, Number(e.target.value)] })
-                  }
-                />
+                <p className="mt-1 text-xs text-[#6b7280]">
+                  每步执行后的默认随机间隔（秒）；单步可设 gap 覆盖。长等待用 wait 步骤或事件结束标志。
+                </p>
               </div>
             </div>
+
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <label className="label mb-0">步骤编排</label>
+                <select
+                  className="input w-auto text-xs"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const preset = PLATFORM_PRESETS[editing.platform].find((p) => p.label === e.target.value);
+                    if (preset) setEditing({ ...editing, steps: preset.steps.map((s) => ({ ...s })) });
+                    e.target.value = '';
+                  }}
+                >
+                  <option value="" disabled>从模板填充…</option>
+                  {PLATFORM_PRESETS[editing.platform].map((p) => (
+                    <option key={p.label} value={p.label}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+              <ol className="space-y-3">
+                {editing.steps.map((step, index) => (
+                  <li key={index} className="rounded-lg border border-surface-border p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-xs font-medium text-[#6b7280]">#{index + 1}</span>
+                      <select
+                        className="input flex-1"
+                        value={step.op}
+                        onChange={(e) =>
+                          updateStep(index, emptyStep(editing.platform, e.target.value as ActionStepOp))
+                        }
+                      >
+                        {platformOps.map((op) => (
+                          <option key={op} value={op}>{STEP_LABELS[op]}</option>
+                        ))}
+                      </select>
+                      <button type="button" className="btn px-2" disabled={index === 0} onClick={() => moveStep(index, -1)}>
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn px-2"
+                        disabled={index === editing.steps.length - 1}
+                        onClick={() => moveStep(index, 1)}
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn px-2 text-red-300"
+                        disabled={editing.steps.length <= 1}
+                        onClick={() =>
+                          setEditing({
+                            ...editing,
+                            steps: editing.steps.filter((_, i) => i !== index),
+                          })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <StepFields
+                      step={step}
+                      platform={editing.platform}
+                      onChange={(s) => updateStep(index, s)}
+                    />
+                  </li>
+                ))}
+              </ol>
+              <button
+                type="button"
+                className="btn mt-2"
+                onClick={() =>
+                  setEditing({
+                    ...editing,
+                    steps: [...editing.steps, emptyStep(editing.platform)],
+                  })
+                }
+              >
+                <Plus className="h-4 w-4" />
+                添加步骤
+              </button>
+            </div>
+
             <div className="flex gap-2">
               <button type="button" className="btn btn-primary" onClick={() => save.mutate(editing)} disabled={save.isPending}>
                 保存

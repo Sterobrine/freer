@@ -8,11 +8,11 @@ import type {
   TreeNode,
   ValidationResult,
 } from './types';
-
-const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
+import { apiBaseUrl, wsBaseUrl } from './baseUrl';
+import { normalizeFreerAction } from '../lib/actionSteps';
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
-  const resp = await fetch(`${API_BASE}${path}`, {
+  const resp = await fetch(`${apiBaseUrl()}${path}`, {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   });
@@ -24,7 +24,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
 }
 
 async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
-  const resp = await fetch(`${API_BASE}${path}`, init);
+  const resp = await fetch(`${apiBaseUrl()}${path}`, init);
   if (!resp.ok) throw new Error(`请求失败: ${resp.status}`);
   return resp.blob();
 }
@@ -62,7 +62,8 @@ export const api = {
   validateEvent: (name: string) =>
     request<ValidationResult>(`/events/${encodeURIComponent(name)}/validate`, { method: 'POST' }).then(unwrap),
 
-  listActions: () => request<FreerAction[]>('/actions').then(unwrap),
+  listActions: () =>
+    request<FreerAction[]>('/actions').then(unwrap).then((list) => list.map(normalizeFreerAction)),
   createAction: (action: FreerAction) =>
     request<FreerAction>('/actions', { method: 'POST', body: JSON.stringify(action) }).then(unwrap),
   updateAction: (name: string, action: FreerAction) =>
@@ -74,9 +75,16 @@ export const api = {
     request<{ deleted: string }>(`/actions/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(unwrap),
 
   listTemplates: () => request<string[]>('/templates').then(unwrap),
+  uploadTemplate: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch(`${apiBaseUrl()}/templates/upload`, { method: 'POST', body: form });
+    const body = (await resp.json()) as ApiResult<{ path: string }>;
+    return unwrap(body);
+  },
   capture: () => request<{ frame_id: number; url: string }>('/capture', { method: 'POST' }).then(unwrap),
-  screenshotUrl: () => `${API_BASE}/screenshot?t=${Date.now()}`,
-  assetUrl: (filename: string) => `${API_BASE}/assets/img/${encodeURIComponent(filename)}`,
+  screenshotUrl: () => `${apiBaseUrl()}/screenshot?t=${Date.now()}`,
+  assetUrl: (filename: string) => `${apiBaseUrl()}/assets/img/${encodeURIComponent(filename)}`,
 
   preview: (body: Record<string, unknown>) =>
     request<PreviewResult>('/recognize/preview', { method: 'POST', body: JSON.stringify(body) }).then(unwrap),
@@ -100,13 +108,12 @@ export const api = {
   importPackage: async (file: File, mode: 'merge' | 'replace' = 'merge') => {
     const form = new FormData();
     form.append('file', file);
-    const resp = await fetch(`${API_BASE}/import?mode=${mode}`, { method: 'POST', body: form });
+    const resp = await fetch(`${apiBaseUrl()}/import?mode=${mode}`, { method: 'POST', body: form });
     const body = (await resp.json()) as ApiResult<{ imported_events: number; imported_actions: number }>;
     return unwrap(body);
   },
 };
 
 export function wsLogsUrl(): string {
-  const base = import.meta.env.VITE_WS_BASE ?? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
-  return `${base}/logs`;
+  return `${wsBaseUrl()}/logs`;
 }

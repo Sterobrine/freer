@@ -56,7 +56,8 @@ class EventStore:
 class ActionStore:
     @staticmethod
     def list_actions() -> List[Dict[str, Any]]:
-        return Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
+        raw = Tools.FileTool.ReadJSON(str(paths.ACTION_JSON))
+        return [sanitize_action_dict(item) for item in raw]
 
     @staticmethod
     def write_actions(actions: List[Dict[str, Any]]) -> None:

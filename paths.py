@@ -1,6 +1,12 @@
 from pathlib import Path
+import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+def _project_root() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+PROJECT_ROOT = _project_root()
 
 DATA_DIR = PROJECT_ROOT / 'data'
 IMG_DIR = PROJECT_ROOT / 'img'

@@ -51,11 +51,9 @@ export const SYMBOL_FIELD_LABELS = {
   match_type: '识别方式',
   accuracy: '匹配阈值',
   roi: '识别区域',
-  roiPlaceholder: '左上 x, 左上 y, 右下 x, 右下 y',
   fallback: '备用识别链',
-  fallbackPlaceholder: '用 | 分隔，例如 template|ocr',
   last_resort: '兜底策略',
-  target: '目标（图片路径或文字）',
+  target: '识别目标',
 };
 
 export const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -80,4 +78,22 @@ export function matchTypeLabel(value: string): string {
 
 export function lastResortLabel(value: string): string {
   return LAST_RESORT_LABELS[value] ?? value;
+}
+
+/** @deprecated 使用 actionSteps.ts 中的 ACTION_STEP_LABELS */
+export const ACTION_TYPE_LABELS: Record<number, string> = {
+  1: '左键单击',
+  2: '右键单击',
+  3: '拖拽',
+  4: '等待',
+  5: '输入文字',
+  6: '左键双击',
+  7: '中键单击',
+  8: '滚轮滚动',
+  9: '按键',
+  10: '长按',
+};
+
+export function actionTypeLabel(value: number): string {
+  return ACTION_TYPE_LABELS[value] ?? String(value);
 }

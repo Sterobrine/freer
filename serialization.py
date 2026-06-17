@@ -15,7 +15,9 @@ GRAND_EVENT_FIELDS: Set[str] = MICRO_EVENT_FIELDS | {
 }
 
 ACTION_FIELDS: Set[str] = {
-    'name', 'id', 'action_type', 'run_time', 'wait_time', 'duration', 'gap', 'text',
+    'name', 'id', 'platform', 'run_time', 'gap', 'steps',
+    # legacy — read-only migration source
+    'action_type', 'wait_time', 'duration', 'text',
 }
 
 CHILD_ENTRY_FIELDS: Set[str] = {
@@ -57,7 +59,8 @@ def sanitize_event_dict(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def sanitize_action_dict(data: Dict[str, Any]) -> Dict[str, Any]:
-    cleaned = _pick_fields(data, ACTION_FIELDS)
+    from action_steps import sanitize_action_dict as _sanitize_steps
+    cleaned = _sanitize_steps(data)
     for key in RUNTIME_STRIP:
         cleaned.pop(key, None)
     return cleaned

@@ -39,15 +39,13 @@ class MicroEvent(Event):
 
 
 class Action:
-    def __init__(self, name=None, action_type=None, run_time=None, wait_time=None, gap=None, duration=None, text=None):
+    def __init__(self, name=None, run_time=None, gap=None, steps=None, platform=None, **kwargs):
         self.hwnd = None
         self.id = None
         self.name = name
-        self.action_type = action_type
-        self.run_time = run_time  # 动作重复进行次数
-        self.wait_time = wait_time  # 等待动作专用
-        self.duration = duration  # 持续性动作专用
-        self.text = text
+        self.platform = platform or 'windows'
+        self.run_time = run_time if run_time is not None else 1
+        self.steps = steps if steps is not None else []
         if gap is None:
             self.gap = [0.02, 0.03]
         else:
@@ -56,4 +54,7 @@ class Action:
     def SetByDict(self, data_dict):
         for key in data_dict:
             self.__dict__[key] = data_dict[key]
-# 1.left_click 2.right_click 3.drag 4.wait
+        if not self.steps and ('action_type' in data_dict or 'steps' in data_dict):
+            from action_steps import get_action_steps, normalize_platform
+            self.platform = normalize_platform(data_dict.get('platform', self.platform))
+            self.steps = get_action_steps(data_dict)

@@ -27,6 +27,30 @@ const ALLOW_SYSTEM_PYTHON = process.env.FREER_ALLOW_SYSTEM_PYTHON === '1';
 
 const IS_WIN = process.platform === 'win32';
 
+function setupWindowsConsole() {
+  if (!IS_WIN) return;
+
+  try {
+    spawnSync('cmd.exe', ['/d', '/s', '/c', 'chcp', '65001'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } catch {
+    /* ignore */
+  }
+
+  process.env.PYTHONIOENCODING = process.env.PYTHONIOENCODING || 'utf-8';
+  process.env.PYTHONUTF8 = process.env.PYTHONUTF8 || '1';
+
+  for (const stream of [process.stdout, process.stderr]) {
+    stream?.setDefaultEncoding?.('utf8');
+  }
+}
+
+function childEnv(extra = {}) {
+  return { ...process.env, ...extra };
+}
+
 function shouldUseShell(cmd) {
   return IS_WIN && !path.isAbsolute(cmd);
 }
@@ -57,12 +81,47 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function commandExists(cmd, args = ['--version']) {
+function commandExists(cmd, args = ['--version'], opts = {}) {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: 'ignore', shell: IS_WIN });
+    const p = spawn(cmd, args, { stdio: 'ignore', shell: IS_WIN, ...opts });
     p.on('error', () => resolve(false));
     p.on('exit', (code) => resolve(code === 0));
   });
+}
+
+function cargoBinDir() {
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (!home) return null;
+  const dir = path.join(home, '.cargo', 'bin');
+  return fs.existsSync(path.join(dir, IS_WIN ? 'cargo.exe' : 'cargo')) ? dir : null;
+}
+
+async function ensureCargo() {
+  if (await commandExists('cargo', ['--version'])) {
+    return true;
+  }
+
+  const binDir = cargoBinDir();
+  if (!binDir) {
+    return false;
+  }
+
+  const sep = path.delimiter;
+  if (!(process.env.PATH || '').split(sep).includes(binDir)) {
+    process.env.PATH = `${binDir}${sep}${process.env.PATH || ''}`;
+    log(`已将 Rust 工具链加入 PATH: ${binDir}`);
+  }
+
+  return commandExists('cargo', ['--version']);
+}
+
+function logCargoInstallHint() {
+  logErr('错误：未找到 cargo（Tauri 桌面版需要 Rust 工具链）');
+  logErr('请安装 Rust：https://rustup.rs/');
+  logErr('Windows 可执行:');
+  logErr('  winget install Rustlang.Rustup');
+  logErr('安装完成后重新打开终端，再运行: pnpm start:desktop');
+  logErr('若已安装但仍报错，确认 %USERPROFILE%\\.cargo\\bin 在 PATH 中');
 }
 
 function condaRoots() {
@@ -176,11 +235,13 @@ function checkPythonDeps(python) {
 }
 
 function spawnProc(cmd, args, opts = {}) {
+  const { env, ...rest } = opts;
   return spawn(cmd, args, {
     cwd: ROOT,
     stdio: 'inherit',
     shell: shouldUseShell(cmd),
-    ...opts,
+    env: childEnv(env),
+    ...rest,
   });
 }
 
@@ -192,6 +253,7 @@ function spawnDetachedApi(python) {
     detached: !IS_WIN,
     windowsHide: true,
     shell: shouldUseShell(python.cmd),
+    env: childEnv(),
   });
   if (!IS_WIN) {
     child.unref();
@@ -204,10 +266,10 @@ async function waitForApi(child) {
   let stderr = '';
   let stdout = '';
   child.stderr?.on('data', (chunk) => {
-    stderr += chunk.toString();
+    stderr += chunk.toString('utf8');
   });
   child.stdout?.on('data', (chunk) => {
-    stdout += chunk.toString();
+    stdout += chunk.toString('utf8');
   });
   child.on('exit', () => {
     exited = true;
@@ -250,6 +312,8 @@ function stopApi(child, started) {
 }
 
 async function main() {
+  setupWindowsConsole();
+
   if (!['web', 'tauri'].includes(MODE)) {
     logErr(`未知模式: ${MODE}（可用: web | tauri）`);
     process.exit(1);
@@ -279,6 +343,11 @@ async function main() {
 
   if (!(await commandExists('pnpm', ['--version']))) {
     logErr('错误：未找到 pnpm，请先安装 Node.js 与 pnpm');
+    process.exit(1);
+  }
+
+  if (MODE === 'tauri' && !(await ensureCargo())) {
+    logCargoInstallHint();
     process.exit(1);
   }
 

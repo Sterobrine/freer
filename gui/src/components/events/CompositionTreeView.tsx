@@ -177,14 +177,10 @@ function SortableRootChild({
 
 function TreeNodeRow({
   node,
-  path,
   depth,
   expanded,
   onToggle,
   selection,
-  onSelectChild,
-  onSelectException,
-  onSelectNested,
   onOpenEvent,
   openContext,
   isRootChild,
@@ -193,14 +189,10 @@ function TreeNodeRow({
   inCycle,
 }: {
   node: TreeNode;
-  path: string;
   depth: number;
   expanded: boolean;
   onToggle: () => void;
   selection: TreeSelection;
-  onSelectChild: (index: number) => void;
-  onSelectException: (index: number) => void;
-  onSelectNested: (name: string) => void;
   onOpenEvent: (name: string, context?: OpenEventContext) => void;
   openContext?: OpenEventContext;
   isRootChild?: boolean;
@@ -295,14 +287,10 @@ function SubtreeNodes({
           <div key={path}>
             <TreeNodeRow
               node={node}
-              path={path}
               depth={depth}
               expanded={expanded}
               onToggle={() => togglePath(path)}
               selection={selection}
-              onSelectChild={() => {}}
-              onSelectException={() => {}}
-              onSelectNested={() => {}}
               onOpenEvent={onOpenEvent}
               openContext={openContext}
               inCycle={cycleNodes.has(node.name)}
@@ -691,7 +679,10 @@ export function CompositionTreeView({
                     <button
                       type="button"
                       className="flex-1 text-left text-sm text-amber-100/90 hover:text-amber-50"
-                      onClick={() => onOpenEvent(name, { childIndex: null, exceptionIndex: i })}
+                      onClick={() => {
+                        onSelectException(i);
+                        onOpenEvent(name, { childIndex: null, exceptionIndex: i });
+                      }}
                     >
                       {name}
                       {excTree?.event_type === 1 && excTree.action && (
@@ -701,7 +692,10 @@ export function CompositionTreeView({
                     <button
                       type="button"
                       className="text-[#9aa3b2] hover:text-red-300"
-                      onClick={() => updateExceptions(exceptions.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        updateExceptions(exceptions.filter((_, j) => j !== i));
+                        onSelectException(null);
+                      }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

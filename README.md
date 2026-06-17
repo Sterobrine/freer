@@ -19,14 +19,33 @@ Freer 是一个面向 Windows 平台的游戏/模拟器自动化框架（V0.1）
 
 ### 动作（Action）
 
-微事件实际执行的操作，当前支持：
+微事件绑定的操作序列，由 **平台**（`platform`）与 **步骤列表**（`steps`）组成。同一动作名称可被多个微事件复用。
 
-| action_type | 名称 | 说明 |
-|-------------|------|------|
-| 1 | 左键单击 | 在识别到的坐标区域内随机点击 |
-| 3 | 拖拽 | 从起点拖到终点，支持匀速移动 |
-| 4 | 等待 | 暂停指定时间（可为区间，随机取值） |
-| 5 | 文本输入 | 通过 ADB 逐字符输入文本 |
+#### 平台与原子步骤
+
+| 平台 | 原子步骤 | 执行通道 |
+|------|----------|----------|
+| `windows` | `click`、`pointer_down`、`pointer_up`、`pointer_move`、`drag`、`wait`、`key`、`text` | Win32 `PostMessage` → 模拟器子窗口 |
+| `adb` | `tap`、`swipe`、`wait`、`key`、`text` | `adb shell input` |
+| `mac` | 同 Windows schema | **未实现**（预留） |
+
+跨平台共享：`wait`（短延迟）、`key`、`text`。
+
+**说明**：
+
+- 双击、长按、滑动等由多步组合实现，不再使用 `action_type` 枚举。
+- Windows 平台 `text` 步骤当前仍经 **ADB** 逐字符输入（与指针通道分离）。
+- `pointer_down` → `pointer_move` → `pointer_up` 在同一次步骤执行内会锁定坐标，避免每步重新随机取点。
+
+#### 坐标索引（`pos` / `from_pos` / `to_pos`）
+
+微事件通过 `symbol_start`（多张图用 `|` 分隔）或 `default_position` 提供矩形区域。动作步骤用 **位置索引** 引用：
+
+- 索引 `0`：第一张图 / 第一对坐标
+- 索引 `1`：第二张图 / 第二对坐标
+- `swipe` / `drag` 可用 `offset` 在单区域内滑动，仅需索引 `0`
+
+保存微事件时，API 校验会警告位置槽位不足、缺 `window_name`（Windows 指针动作）等配置问题。
 
 ### 事件树
 
@@ -75,9 +94,22 @@ Freer 是一个面向 Windows 平台的游戏/模拟器自动化框架（V0.1）
 
 ### 4. 动作执行
 
-- **鼠标操作**：通过 `PostMessage` 向目标窗口发送 `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` / `WM_LBUTTONUP`
-- **坐标随机化**：在识别到的矩形区域内随机取点，降低被检测风险
-- **间隔随机化**：动作间隔与事件间隔均在配置的 `[min, max]` 区间内随机
+- **指针操作**：Windows 经 `PostMessage` 发送 `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` / `WM_LBUTTONUP`；ADB 经 `input tap` / `input swipe`
+- **坐标随机化**：在识别矩形内随机取点；`pointer_down` 后同索引的 `move`/`up` 复用已锁定坐标
+- **间隔随机化**：见下文「等待与间隔」
+
+#### 等待与间隔
+
+| 配置 | 作用时机 | 典型用途 |
+|------|----------|----------|
+| `event.gap` | 微事件整套动作执行**之后** | 两次调度之间的节奏（秒级） |
+| `action.gap` | 动作各步骤**之间**（默认） | 步骤链节奏；可被单步 `gap` 覆盖 |
+| `step.gap` | 单步执行**之后** | 覆盖动作默认步骤间隔 |
+| `wait` 步骤 | 步骤链**内部** | 短延迟（如双击间隔 &lt;1s） |
+| `action.run_time` | 单次触发内重复**整套** steps | 默认 `1`；双击请用步骤编排 |
+| `event.max_suc_run_time` | 调度循环中同一微事件连续触发上限 | 过热冷却，与 `run_time` 不同 |
+
+等界面变化应依赖 `symbol_finish` 或单独微事件，不宜用长 `wait` 或过大 `event.gap` 代替。
 
 ---
 
@@ -167,8 +199,8 @@ python main.py
 | `symbol_start` | 微事件 | 起始特征图路径，多张用 `\|` 分隔 |
 | `symbol_finish` | 全部 | 结束特征图路径，可为 `null` |
 | `accuracy` | 全部 | 图像匹配置信度阈值（0.6–1.0，默认 0.85） |
-| `max_suc_run_time` | 全部 | 同一事件最大连续执行次数，超出后冷却 |
-| `gap` | 微事件 | 动作完成后的随机等待区间 `[min, max]`（秒） |
+| `max_suc_run_time` | 全部 | 调度循环中同一微事件最大连续执行次数，超出后冷却（与动作 `run_time` 不同） |
+| `gap` | 微事件 | 整套动作完成后的随机等待 `[min, max]`（秒） |
 | `default_position` | 微事件 | 固定坐标，`x1,y1\|x2,y2` 形式定义矩形 |
 | `action` | 微事件 | 绑定的动作名称 |
 | `event_list` | 宏事件 | 子事件列表，每项含 `event`、`should_run_time`、`max_run_time` |
@@ -180,13 +212,22 @@ python main.py
 
 | 字段 | 说明 |
 |------|------|
-| `name` | 动作名称 |
-| `action_type` | 1=单击, 3=拖拽, 4=等待, 5=输入 |
-| `run_time` | 动作重复次数 |
-| `gap` | 每次重复之间的随机间隔 `[min, max]` |
-| `duration` | 拖拽持续时间（秒） |
-| `wait_time` | 等待时长，可为数值或 `[min, max]` 区间 |
-| `text` | 输入动作的文本内容 |
+| `name` | 动作名称（唯一） |
+| `platform` | `windows` / `adb` / `mac` |
+| `steps` | 步骤数组，每步含 `op` 及参数（见下表） |
+| `run_time` | 单次微事件触发内，整套 `steps` 重复次数（默认 `1`） |
+| `gap` | 步骤间默认随机间隔 `[min, max]`（秒），可被单步 `gap` 覆盖 |
+
+#### 常用步骤参数
+
+| `op` | 主要参数 |
+|------|----------|
+| `click` / `tap` | `pos`, `button`（Windows） |
+| `pointer_down` / `pointer_up` / `pointer_move` | `pos`, `button` |
+| `drag` / `swipe` | `from_pos`, `to_pos` 或 `offset`, `duration` |
+| `wait` | `seconds`（可为 `[min, max]` 区间） |
+| `key` | `value`（如 `KEYCODE_BACK`） |
+| `text` | `value` |
 
 ### 宏事件子事件项
 
@@ -252,7 +293,7 @@ python main.py
 
 | 页面 | 功能 |
 |------|------|
-| 动作 | 动作 CRUD |
+| 动作 | 按平台编排 `steps`；事件属性面板展示平台徽章与步骤摘要 |
 | 任务 | 选择根宏事件、循环次数、启动/停止、WebSocket 日志 |
 | 模板/ROI | ADB 截屏、拖拽选 ROI、模板预览 |
 | 设置 | `config.yaml`、数据目录、ADB 设备等 |
@@ -277,10 +318,10 @@ python main.py
 
 ## 已知限制
 
-1. **平台**：引擎鼠标操作依赖 Windows（`pywin32`）；截屏与输入可走 ADB，跨平台能力仍在演进中。
+1. **平台**：引擎指针操作依赖 Windows（`pywin32`）；ADB 用于截屏与 `adb` 平台动作；macOS 动作 schema 已有、执行器未实现。
 2. **ADB 设备**：默认 `emulator-5554`，可在 `config.yaml` 或环境变量 `FREER_ADB_DEVICE` 中修改。
 3. **子事件冲突**：相同 `symbol_start` 时可通过子事件 `priority` 字段区分（高优先级优先）。
-4. **右键单击**：`action_type = 2` 尚未实现。
+4. **Windows text**：`platform=windows` 时 `text` 步骤仍经 ADB 输入，与 Win32 指针通道分离。
 5. **GUI**：Tauri + React（`gui/`）；事件库支持列表三栏与画布树形两种模式；桌面打包见 `UPGRADE_PLAN.md` §4.4.8.5。
 
 ---
@@ -292,23 +333,43 @@ python main.py
   {
     "name": "左键单击1次",
     "id": 1,
-    "action_type": 1,
+    "platform": "windows",
     "run_time": 1,
-    "wait_time": null,
-    "duration": null,
-    "gap": [0.02, 0.03]
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "click", "pos": 0, "button": "left" }]
+  },
+  {
+    "name": "双击",
+    "id": 2,
+    "platform": "windows",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [
+      { "op": "click", "pos": 0 },
+      { "op": "wait", "seconds": 0.05 },
+      { "op": "click", "pos": 0 }
+    ]
   },
   {
     "name": "等待1s",
-    "id": 2,
-    "action_type": 4,
+    "id": 3,
+    "platform": "windows",
     "run_time": 1,
-    "wait_time": 1,
-    "duration": null,
-    "gap": [0.02, 0.03]
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "wait", "seconds": 1 }]
+  },
+  {
+    "name": "ADB上滑",
+    "id": 4,
+    "platform": "adb",
+    "run_time": 1,
+    "gap": [0.02, 0.03],
+    "steps": [{ "op": "swipe", "from_pos": 0, "offset": [0, -300], "duration": 0.3 }]
   }
 ]
 ```
+
+旧版 `action_type` 字段在加载时会自动迁移为 `platform` + `steps`（见 `action_steps.py`）。
 
 ---
 
