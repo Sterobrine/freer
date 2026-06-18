@@ -66,9 +66,14 @@ class TaskRunner:
                     self._runner = runner
                 runner.Start()
                 with self._lock:
-                    if runner._stop_requested:
+                    reason = getattr(runner, '_end_reason', 'completed')
+                    if reason == 'stopped' or runner._stop_requested:
                         self._status = 'stopped'
                         logger.info('任务已停止: %s', event_name)
+                    elif reason == 'paused':
+                        self._status = 'error'
+                        self._error = getattr(runner, '_end_message', None) or '任务异常暂停'
+                        logger.warning('任务异常结束: %s — %s', event_name, self._error)
                     else:
                         self._status = 'completed'
                         logger.info('任务完成: %s', event_name)
@@ -112,6 +117,18 @@ class TaskRunner:
                 self._status = 'stopping'
             logger.info('任务停止请求')
         return self.snapshot()
+
+    def reset_workspace(self) -> None:
+        """Clear idle task snapshot when switching projects."""
+        with self._lock:
+            if self._status in ('running', 'paused', 'stopping'):
+                return
+            self._status = 'idle'
+            self._error = None
+            self._event_name = None
+            self._repeat_time = 1
+            self._runner = None
+            self._thread = None
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         thread = self._thread

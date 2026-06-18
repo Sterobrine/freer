@@ -12,11 +12,19 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type { FreerEvent, OpenEventContext } from '../api/types';
+import { useActiveProjectId } from '../hooks/useActiveProject';
 import { CompositionTreeView } from '../components/events/CompositionTreeView';
 import { EventGraphEditor, EventGraphSingleNode } from '../components/events/EventGraphEditor';
 import { EventPropertyForm } from '../components/events/EventPropertyForm';
 import { ColumnResizeHandle, useResizableWidth } from '../components/ColumnResizeHandle';
-import { EVENT_DRAG_MIME } from '../lib/eventComposition';
+import { detectCycle, EVENT_DRAG_MIME, mergeEventIndex } from '../lib/eventComposition';
+import {
+  confirmDiscardDraft,
+  findEventReferrers,
+  formatValidationWarnings,
+  isEventDraftDirty,
+} from '../lib/eventDraft';
+import { queryKeys } from '../lib/queryKeys';
 
 type ViewMode = 'classic' | 'graph';
 
@@ -63,11 +71,15 @@ function emptyMacro(): FreerEvent {
   };
 }
 
+type CatalogTab = 'all' | 'macro' | 'micro' | 'exception';
+
 export function EventsPage() {
   const qc = useQueryClient();
-  const { data: events = [] } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
-  const { data: actions = [] } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
+  const projectId = useActiveProjectId();
+  const { data: events = [] } = useQuery({ queryKey: queryKeys.events(projectId), queryFn: api.listEvents });
+  const { data: actions = [] } = useQuery({ queryKey: queryKeys.actions(projectId), queryFn: api.listActions });
   const [filter, setFilter] = useState('');
+  const [catalogTab, setCatalogTab] = useState<CatalogTab>('all');
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [draft, setDraft] = useState<FreerEvent | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -82,32 +94,57 @@ export function EventsPage() {
 
   const resetNavigation = () => setNavStack([]);
 
+  const actionNames = useMemo(() => actions.map((a) => a.name), [actions]);
+
+  const draftDirty = useMemo(
+    () => isEventDraftDirty(draft, selectedName, isNew, events),
+    [draft, selectedName, isNew, events],
+  );
+
+  const draftHasCycle = useMemo(() => {
+    if (!draft?.name || draft.event_type !== 0) return null;
+    const index = mergeEventIndex(events, draft);
+    return detectCycle(draft.name, index);
+  }, [draft, events]);
+
+  const guardDirtyNavigation = (next: () => void) => {
+    if (draftDirty && !confirmDiscardDraft()) return;
+    next();
+  };
+
   const navigateToEvent = (name: string, context?: OpenEventContext) => {
-    if (isNew || !selectedName || selectedName === name) {
+    const go = () => {
+      if (isNew || !selectedName || selectedName === name) {
+        setSelectedName(name);
+        setIsNew(false);
+        setChildIndex(null);
+        setExceptionIndex(null);
+        setStatus('');
+        return;
+      }
+      if (draft) {
+        setNavStack((stack) => [
+          ...stack,
+          {
+            name: selectedName,
+            childIndex: context?.childIndex !== undefined ? context.childIndex : childIndex,
+            exceptionIndex:
+              context?.exceptionIndex !== undefined ? context.exceptionIndex : exceptionIndex,
+            draft: { ...draft },
+          },
+        ]);
+      }
       setSelectedName(name);
       setIsNew(false);
       setChildIndex(null);
       setExceptionIndex(null);
       setStatus('');
+    };
+    if (draftDirty && selectedName !== name) {
+      guardDirtyNavigation(go);
       return;
     }
-    if (draft) {
-      setNavStack((stack) => [
-        ...stack,
-        {
-          name: selectedName,
-          childIndex: context?.childIndex !== undefined ? context.childIndex : childIndex,
-          exceptionIndex:
-            context?.exceptionIndex !== undefined ? context.exceptionIndex : exceptionIndex,
-          draft: { ...draft },
-        },
-      ]);
-    }
-    setSelectedName(name);
-    setIsNew(false);
-    setChildIndex(null);
-    setExceptionIndex(null);
-    setStatus('');
+    go();
   };
 
   const goBack = () => {
@@ -135,19 +172,23 @@ export function EventsPage() {
   };
 
   const selectFromSidebar = (name: string) => {
-    resetNavigation();
-    setSelectedName(name);
-    setIsNew(false);
-    setChildIndex(null);
-    setExceptionIndex(null);
-    setStatus('');
+    guardDirtyNavigation(() => {
+      resetNavigation();
+      setSelectedName(name);
+      setIsNew(false);
+      setChildIndex(null);
+      setExceptionIndex(null);
+      setStatus('');
+    });
   };
-  const actionNames = useMemo(() => actions.map((a) => a.name), [actions]);
 
-  const filtered = useMemo(
-    () => events.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())),
-    [events, filter],
-  );
+  const filtered = useMemo(() => {
+    let list = events;
+    if (catalogTab === 'macro') list = list.filter((e) => e.event_type === 0 && !e.is_exception);
+    else if (catalogTab === 'micro') list = list.filter((e) => e.event_type === 1 && !e.is_exception);
+    else if (catalogTab === 'exception') list = list.filter((e) => e.is_exception);
+    return list.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase()));
+  }, [events, filter, catalogTab]);
 
   useEffect(() => {
     if (!selectedName) {
@@ -168,16 +209,26 @@ export function EventsPage() {
   const save = useMutation({
     mutationFn: async (payload: SavePayload) => {
       const { event, originalName } = resolveSavePayload(payload);
+      if (event.event_type === 0 && event.name) {
+        const index = mergeEventIndex(events, event);
+        const cycle = detectCycle(event.name, index);
+        if (cycle) {
+          throw new Error(`存在循环引用，无法保存：${cycle.join(' → ')}`);
+        }
+      }
       const validation = await api.validateEvents([event]);
       const item = validation.events.find((v) => v.name === event.name);
       if (item && !item.valid) {
         throw new Error(item.issues.map((i) => i.message).join('；'));
       }
-      if (isNew && !selectedName) return api.createEvent(event);
-      return api.updateEvent(originalName ?? selectedName!, event);
+      const warnings = item?.warnings ?? [];
+      const saved = isNew && !selectedName
+        ? await api.createEvent(event)
+        : await api.updateEvent(originalName ?? selectedName!, event);
+      return { saved, warnings };
     },
-    onSuccess: (saved, payload) => {
-      qc.invalidateQueries({ queryKey: ['events'] });
+    onSuccess: ({ saved, warnings }, payload) => {
+      qc.invalidateQueries({ queryKey: queryKeys.events(projectId) });
       const { originalName } = resolveSavePayload(payload);
       const savedRoot = originalName === null || originalName === selectedName;
 
@@ -194,15 +245,29 @@ export function EventsPage() {
           );
         }
       }
-      setStatus('已保存');
+      const warnText = formatValidationWarnings(warnings);
+      setStatus(warnText ? `已保存（警告：${warnText}）` : '已保存');
     },
     onError: (e: Error) => setStatus(e.message),
   });
 
+  const requestDelete = (name: string) => {
+    const referrers = findEventReferrers(events, name);
+    if (referrers.length > 0) {
+      const ok = window.confirm(
+        `事件「${name}」被以下事件引用：${referrers.join('、')}。仍要删除吗？`,
+      );
+      if (!ok) return;
+    } else if (!window.confirm(`确定删除事件「${name}」？`)) {
+      return;
+    }
+    remove.mutate(name);
+  };
+
   const remove = useMutation({
     mutationFn: (name: string) => api.deleteEvent(name),
     onSuccess: (_data, name) => {
-      qc.invalidateQueries({ queryKey: ['events'] });
+      qc.invalidateQueries({ queryKey: queryKeys.events(projectId) });
       if (name === selectedName) {
         resetNavigation();
         setSelectedName(null);
@@ -214,7 +279,7 @@ export function EventsPage() {
   });
 
   return (
-    <div className="flex h-[calc(100vh-57px)]">
+    <div className="flex h-full">
       {/* 事件目录 */}
       <aside
         className="flex shrink-0 flex-col overflow-hidden"
@@ -230,17 +295,40 @@ export function EventsPage() {
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
+          <div className="mt-2 flex gap-0.5 rounded-lg bg-surface-raised/50 p-0.5 text-xs">
+            {(
+              [
+                ['all', '全部'],
+                ['macro', '宏'],
+                ['micro', '微'],
+                ['exception', '异常'],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                className={`flex-1 rounded-md px-1 py-1 ${
+                  catalogTab === tab ? 'bg-surface-raised text-[#e8eaed]' : 'text-[#6b7280]'
+                }`}
+                onClick={() => setCatalogTab(tab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="mt-2 flex gap-1">
             <button
               type="button"
               className="btn flex-1 text-xs"
               onClick={() => {
-                resetNavigation();
-                setDraft(emptyMacro());
-                setIsNew(true);
-                setSelectedName(null);
-                setChildIndex(null);
-                setExceptionIndex(null);
+                guardDirtyNavigation(() => {
+                  resetNavigation();
+                  setDraft(emptyMacro());
+                  setIsNew(true);
+                  setSelectedName(null);
+                  setChildIndex(null);
+                  setExceptionIndex(null);
+                });
               }}
             >
               <Plus className="h-3 w-3" />宏
@@ -249,12 +337,14 @@ export function EventsPage() {
               type="button"
               className="btn flex-1 text-xs"
               onClick={() => {
-                resetNavigation();
-                setDraft(emptyMicro());
-                setIsNew(true);
-                setSelectedName(null);
-                setChildIndex(null);
-                setExceptionIndex(null);
+                guardDirtyNavigation(() => {
+                  resetNavigation();
+                  setDraft(emptyMicro());
+                  setIsNew(true);
+                  setSelectedName(null);
+                  setChildIndex(null);
+                  setExceptionIndex(null);
+                });
               }}
             >
               <Plus className="h-3 w-3" />微
@@ -328,8 +418,10 @@ export function EventsPage() {
               allEvents={events}
               actions={actionNames}
               onMacroChange={setDraft}
-              onSave={(event, originalName) => save.mutate({ event, originalName })}
-              onDelete={(name) => remove.mutate(name)}
+              onSave={async (event, originalName) => {
+                await save.mutateAsync({ event, originalName });
+              }}
+              onDelete={requestDelete}
               savePending={save.isPending}
               isNew={isNew}
               status={status}
@@ -339,8 +431,10 @@ export function EventsPage() {
               event={draft}
               actions={actionNames}
               onChange={setDraft}
-              onSave={() => save.mutate(draft)}
-              onDelete={() => remove.mutate(draft.name)}
+              onSave={async () => {
+                if (draft) await save.mutateAsync(draft);
+              }}
+              onDelete={() => draft && requestDelete(draft.name)}
               savePending={save.isPending}
               isNew={isNew}
               status={status}
@@ -415,7 +509,7 @@ export function EventsPage() {
           <span className="text-sm font-medium">{draft?.name ?? '未选择'}</span>
           <div className="flex gap-2">
             {draft && !isNew && (
-              <button type="button" className="btn btn-danger text-xs" onClick={() => remove.mutate(draft.name)}>
+              <button type="button" className="btn btn-danger text-xs" onClick={() => requestDelete(draft.name)}>
                 <Trash2 className="h-3.5 w-3.5" />删除
               </button>
             )}
@@ -424,14 +518,28 @@ export function EventsPage() {
                 type="button"
                 className="btn btn-primary text-xs"
                 onClick={() => save.mutate(draft)}
-                disabled={save.isPending}
+                disabled={save.isPending || Boolean(draftHasCycle)}
+                title={draftHasCycle ? `存在环：${draftHasCycle.join(' → ')}` : undefined}
               >
                 <Save className="h-3.5 w-3.5" />保存
               </button>
             )}
           </div>
         </div>
-        {status && <p className="border-b border-surface-border px-4 py-2 text-xs text-[#9aa3b2]">{status}</p>}
+        {status && (
+          <p
+            className={`border-b border-surface-border px-4 py-2 text-xs ${
+              status.startsWith('已保存（警告') ? 'text-amber-300' : 'text-[#9aa3b2]'
+            }`}
+          >
+            {status}
+          </p>
+        )}
+        {draftHasCycle && (
+          <p className="border-b border-surface-border px-4 py-2 text-xs text-red-300">
+            编排存在环，无法保存：{draftHasCycle.join(' → ')}
+          </p>
+        )}
         <div className="flex-1 overflow-y-auto p-4">
           {draft ? (
             <EventPropertyForm event={draft} actions={actionNames} onChange={setDraft} />

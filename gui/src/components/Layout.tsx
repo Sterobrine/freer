@@ -1,6 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useActiveProject } from '../hooks/useActiveProject';
+import { queryKeys } from '../lib/queryKeys';
+import { ProjectSwitcher } from './projects/ProjectSwitcher';
 
 const links = [
   { to: '/events', label: '事件库' },
@@ -11,20 +14,23 @@ const links = [
 ];
 
 export function Layout() {
-  const health = useQuery({ queryKey: ['health'], queryFn: api.health });
+  const { data: projects = [] } = useQuery({ queryKey: queryKeys.projects(), queryFn: api.listProjects });
+  const { activeId, payload, isReady } = useActiveProject(projects);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-surface-border bg-surface px-5 py-3">
-        <div className="flex items-center gap-3">
+    <div className="flex h-full flex-col overflow-hidden">
+      <header className="flex shrink-0 items-center justify-between border-b border-surface-border bg-surface px-5 py-3">
+        <div className="flex min-w-0 items-center gap-3">
           <span className="text-lg font-semibold tracking-tight">Freer</span>
-          {health.data?.ok && (
+          {isReady && (
             <span className="rounded-full bg-emerald-950 px-2 py-0.5 text-xs text-emerald-300">
-              API {health.data.data.api_version}
+              API {payload?.api_version}
             </span>
           )}
+          <span className="h-4 w-px bg-surface-border" aria-hidden />
+          <ProjectSwitcher />
         </div>
-        <nav className="flex gap-1">
+        <nav className="flex shrink-0 gap-0.5">
           {links.map((link) => (
             <NavLink
               key={link.to}
@@ -36,8 +42,8 @@ export function Layout() {
           ))}
         </nav>
       </header>
-      <main className="flex-1 overflow-hidden">
-        <Outlet />
+      <main className="min-h-0 flex-1 overflow-hidden">
+        <Outlet key={activeId} />
       </main>
     </div>
   );

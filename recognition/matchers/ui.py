@@ -64,7 +64,7 @@ class UiMatcher(BaseMatcher):
             print(f'警告：UI 查询失败: {exc}')
             return []
 
-        return [Rect(
+        rect = Rect(
             index=0,
             x1=int(x1),
             y1=int(y1),
@@ -72,4 +72,19 @@ class UiMatcher(BaseMatcher):
             y2=int(y2),
             score=1.0,
             source='ui',
-        )]
+        )
+        if spec.roi is not None:
+            clipped = self._clip_to_roi(rect, spec.roi)
+            return [clipped] if clipped is not None else []
+        return [rect]
+
+    @staticmethod
+    def _clip_to_roi(rect: Rect, roi: Optional[tuple]) -> Optional[Rect]:
+        if roi is None:
+            return rect
+        rx1, ry1, rx2, ry2 = roi
+        cx = (rect.x1 + rect.x2) // 2
+        cy = (rect.y1 + rect.y2) // 2
+        if rx1 <= cx < rx2 and ry1 <= cy < ry2:
+            return rect
+        return None

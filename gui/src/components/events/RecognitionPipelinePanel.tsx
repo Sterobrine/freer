@@ -1,5 +1,8 @@
 import { ChevronDown, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { api } from '../../api/client';
 import type { FreerEvent } from '../../api/types';
 import {
   LAST_RESORT_LABELS,
@@ -17,6 +20,7 @@ import {
 import { getSymbolTarget, setSymbolTarget } from '../../lib/formValues';
 import { MATCH_TYPES } from '../../lib/schemas';
 import { RoiInput, SymbolTargetInput } from '../form/EventFormFields';
+import { CaptureWorkbench } from '../capture/CaptureWorkbench';
 
 type Kind = 'start' | 'finish';
 
@@ -42,6 +46,35 @@ export function RecognitionPipelinePanel({ label, kind, event, templates, onChan
   const roiKey = kind === 'start' ? 'roi_start' : 'roi_finish';
   const fbKey = kind === 'start' ? 'match_fallback_start' : 'match_fallback_finish';
   const lrKey = kind === 'start' ? 'last_resort_start' : 'last_resort_finish';
+  const accKey = kind === 'start' ? 'accuracy_start' : 'accuracy_finish';
+  const indexKey = kind === 'start' ? 'index_start' : 'index_finish';
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [previewMsg, setPreviewMsg] = useState('');
+
+  const preview = useMutation({
+    mutationFn: () =>
+      api.preview({
+        symbol: event[symKey],
+        accuracy: event[accKey] ?? event.accuracy ?? 0.85,
+        kind,
+        match_type_start: event.match_type_start,
+        match_type_finish: event.match_type_finish,
+        roi_start: event.roi_start,
+        roi_finish: event.roi_finish,
+        match_fallback_start: event.match_fallback_start,
+        match_fallback_finish: event.match_fallback_finish,
+        last_resort_start: event.last_resort_start,
+        last_resort_finish: event.last_resort_finish,
+        index_start: event.index_start,
+        index_finish: event.index_finish,
+        use_capture: true,
+      }),
+    onSuccess: (res) => {
+      const n = res.positions?.length ?? 0;
+      setPreviewMsg(n > 0 ? `命中 ${n} 处` : '未命中');
+    },
+    onError: (e: Error) => setPreviewMsg(e.message),
+  });
 
   const matchType = event[typeKey] ?? 'template';
   const symbolTarget = getSymbolTarget(event[symKey]);
@@ -82,6 +115,26 @@ export function RecognitionPipelinePanel({ label, kind, event, templates, onChan
       <p className="rounded-md border border-surface-border/80 bg-[#12151c] px-2.5 py-2 font-mono text-xs text-[#9aa3b2]">
         {flowSummary}
       </p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn text-xs" onClick={() => preview.mutate()} disabled={preview.isPending}>
+          预览识别
+        </button>
+        <button type="button" className="btn text-xs" onClick={() => setWorkbenchOpen(true)}>
+          从画面选取…
+        </button>
+        {previewMsg && <span className="self-center text-xs text-[#9aa3b2]">{previewMsg}</span>}
+      </div>
+      {workbenchOpen && (
+        <CaptureWorkbench
+          kind={kind}
+          event={event}
+          onClose={() => setWorkbenchOpen(false)}
+          onApply={(patchEvent) => {
+            onChange({ ...event, ...patchEvent });
+            setWorkbenchOpen(false);
+          }}
+        />
+      )}
 
       <div className="relative space-y-0 pl-1">
         <PipelineStep
@@ -112,15 +165,25 @@ export function RecognitionPipelinePanel({ label, kind, event, templates, onChan
               />
             </div>
             <div>
-              <label className="label">{SYMBOL_FIELD_LABELS.accuracy}</label>
+              <label className="label">{SYMBOL_FIELD_LABELS.accuracy}（{kind === 'start' ? '起始' : '结束'}）</label>
               <input
                 className="input"
                 type="number"
                 step="0.01"
                 min={0}
                 max={1}
-                value={event.accuracy ?? 0.85}
-                onChange={(e) => patch({ accuracy: Number(e.target.value) })}
+                value={event[accKey] ?? event.accuracy ?? 0.85}
+                onChange={(e) => patch({ [accKey]: Number(e.target.value) } as Partial<FreerEvent>)}
+              />
+            </div>
+            <div>
+              <label className="label">位置索引 index_{kind}</label>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={event[indexKey] ?? 0}
+                onChange={(e) => patch({ [indexKey]: Number(e.target.value) } as Partial<FreerEvent>)}
               />
             </div>
             <div>

@@ -10,6 +10,7 @@ from action_steps import (
     steps_position_demand,
 )
 from freer_api.store import ActionStore, EventStore
+from recognition.adb_text import adb_text_warnings
 from recognition.types import MATCH_TYPES
 
 import paths
@@ -87,6 +88,75 @@ def _validate_action_event_contract(
         })
 
     return issues, warnings
+
+
+def _validate_macro_subtree(
+    event: Dict[str, Any],
+    index: Dict[str, Dict[str, Any]],
+    *,
+    check_assets: bool,
+    visiting: Optional[Set[str]] = None,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Recursively validate child/exception refs for macro events."""
+    issues: List[Dict[str, str]] = []
+    warnings: List[Dict[str, str]] = []
+    if visiting is None:
+        visiting = set()
+    name = event.get('name', '')
+    if name:
+        if name in visiting:
+            return issues, warnings
+        visiting = visiting | {name}
+
+    for role, ref in _collect_refs(event):
+        child = index.get(ref)
+        if child is None:
+            issues.append({
+                'code': 'missing_event_ref',
+                'message': f'{role} 引用不存在: {ref}',
+            })
+            continue
+        child_result = validate_event(child, check_assets=check_assets, index=index)
+        issues.extend(child_result['issues'])
+        warnings.extend(child_result['warnings'])
+    return issues, warnings
+
+
+def _validate_template_paths(sym: Any, sym_field: str) -> List[Dict[str, str]]:
+    warnings: List[Dict[str, str]] = []
+    if not isinstance(sym, str) or not sym or sym.startswith('#'):
+        return warnings
+    for part in sym.split('|'):
+        part = part.strip()
+        if not part:
+            continue
+        p = Path(part) if Path(part).is_absolute() else paths.PROJECT_ROOT / part
+        if not p.exists():
+            warnings.append({
+                'code': 'missing_template',
+                'message': f'{sym_field} 模板不存在: {part}',
+            })
+    return warnings
+
+
+def _validate_action_steps(action: Dict[str, Any], action_name: str) -> List[Dict[str, str]]:
+    warnings: List[Dict[str, str]] = []
+    try:
+        platform = normalize_platform(action.get('platform'))
+        steps = get_action_steps(action)
+    except ValueError:
+        return warnings
+    if platform != 'adb':
+        return warnings
+    for step in steps:
+        if step.get('op') == 'text':
+            value = step.get('value', '')
+            for msg in adb_text_warnings(str(value)):
+                warnings.append({
+                    'code': 'adb_text_risky',
+                    'message': f'动作 "{action_name}" text 步骤: {msg}',
+                })
+    return warnings
 
 
 def _child_ref(entry: Any) -> Optional[str]:
@@ -206,13 +276,15 @@ def validate_event(
                 warnings.extend(contract_warnings)
         issues.extend(_validate_symbol(event.get('symbol_start'), 'symbol_start', event, 'start'))
         issues.extend(_validate_symbol(event.get('symbol_finish'), 'symbol_finish', event, 'finish'))
+        if check_assets:
+            for sym_field in ('symbol_start', 'symbol_finish'):
+                warnings.extend(_validate_template_paths(event.get(sym_field), sym_field))
     else:
-        for role, ref in _collect_refs(event):
-            if ref not in index:
-                issues.append({
-                    'code': 'missing_event_ref',
-                    'message': f'{role} 引用不存在: {ref}',
-                })
+        sub_issues, sub_warnings = _validate_macro_subtree(
+            event, index, check_assets=check_assets,
+        )
+        issues.extend(sub_issues)
+        warnings.extend(sub_warnings)
 
     if name:
         cycle = _detect_cycle(name, index)
@@ -221,18 +293,6 @@ def validate_event(
                 'code': 'cycle_detected',
                 'message': '检测到环: ' + ' → '.join(cycle),
             })
-
-    if check_assets and event_type == 1:
-        for sym_field in ('symbol_start', 'symbol_finish'):
-            sym = event.get(sym_field)
-            if isinstance(sym, str) and sym and '|' not in sym and not sym.startswith('#'):
-                for part in sym.split('|'):
-                    p = Path(part) if Path(part).is_absolute() else paths.PROJECT_ROOT / part
-                    if not p.exists():
-                        warnings.append({
-                            'code': 'missing_template',
-                            'message': f'{sym_field} 模板不存在: {part}',
-                        })
 
     return {
         'valid': len(issues) == 0,

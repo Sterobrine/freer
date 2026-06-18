@@ -20,6 +20,7 @@ class ApiConfig:
 class RecognitionConfig:
     max_consecutive_miss_frames: int = 30
     last_known_ttl_frames: int = 3
+    on_task_pause: str = 'none'
 
 
 @dataclass
@@ -27,6 +28,7 @@ class FreerConfig:
     adb_device: str = 'emulator-5554'
     data_dir: str = 'data'
     img_dir: str = 'img'
+    active_project: str = 'default'
     capture_mode: str = 'adb_pipe'
     log_level: str = 'INFO'
     log_dir: str = 'logs'
@@ -52,6 +54,7 @@ def _defaults_dict() -> Dict[str, Any]:
         'adb_device': 'emulator-5554',
         'data_dir': 'data',
         'img_dir': 'img',
+        'active_project': 'default',
         'capture_mode': 'adb_pipe',
         'log_level': 'INFO',
         'log_dir': 'logs',
@@ -59,6 +62,7 @@ def _defaults_dict() -> Dict[str, Any]:
         'recognition': {
             'max_consecutive_miss_frames': 30,
             'last_known_ttl_frames': 3,
+            'on_task_pause': 'none',
         },
     }
 
@@ -70,6 +74,7 @@ def _dict_to_config(data: Dict[str, Any]) -> FreerConfig:
         adb_device=str(data.get('adb_device', 'emulator-5554')),
         data_dir=str(data.get('data_dir', 'data')),
         img_dir=str(data.get('img_dir', 'img')),
+        active_project=str(data.get('active_project', 'default')),
         capture_mode=str(data.get('capture_mode', 'adb_pipe')),
         log_level=str(data.get('log_level', 'INFO')),
         log_dir=str(data.get('log_dir', 'logs')),
@@ -80,6 +85,7 @@ def _dict_to_config(data: Dict[str, Any]) -> FreerConfig:
         recognition=RecognitionConfig(
             max_consecutive_miss_frames=int(rec_data.get('max_consecutive_miss_frames', 30)),
             last_known_ttl_frames=int(rec_data.get('last_known_ttl_frames', 3)),
+            on_task_pause=str(rec_data.get('on_task_pause', 'none')),
         ),
     )
 
@@ -112,6 +118,7 @@ def save_config(config: FreerConfig, config_path: Optional[Path] = None) -> None
         'adb_device': config.adb_device,
         'data_dir': config.data_dir,
         'img_dir': config.img_dir,
+        'active_project': config.active_project,
         'capture_mode': config.capture_mode,
         'log_level': config.log_level,
         'log_dir': config.log_dir,
@@ -119,6 +126,7 @@ def save_config(config: FreerConfig, config_path: Optional[Path] = None) -> None
         'recognition': {
             'max_consecutive_miss_frames': config.recognition.max_consecutive_miss_frames,
             'last_known_ttl_frames': config.recognition.last_known_ttl_frames,
+            'on_task_pause': config.recognition.on_task_pause,
         },
     }
     with open(path, 'w', encoding='utf-8') as f:

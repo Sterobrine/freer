@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Trash2, X } from 'lucide-react';
 import { useRef } from 'react';
 import { api } from '../../api/client';
+import { useActiveProjectId } from '../../hooks/useActiveProject';
 import { MATCH_TYPE_LABELS } from '../../lib/fieldLabels';
 import { buildFallbackSteps, parseFallbackSteps } from '../../lib/fallbackSteps';
 import {
@@ -21,6 +22,7 @@ import {
   type UiTargetPrefix,
 } from '../../lib/formValues';
 import { MATCH_TYPES } from '../../lib/schemas';
+import { queryKeys } from '../../lib/queryKeys';
 
 const ROI_LABELS = ['左上 X', '左上 Y', '右下 X', '右下 Y'] as const;
 
@@ -209,6 +211,7 @@ type TemplateTargetInputProps = {
 
 export function TemplateTargetInput({ value, templates, onChange }: TemplateTargetInputProps) {
   const qc = useQueryClient();
+  const projectId = useActiveProjectId();
   const fileRef = useRef<HTMLInputElement>(null);
   const paths = parseTemplatePaths(value);
   const normalizedPaths = paths.length ? paths : [''];
@@ -216,7 +219,7 @@ export function TemplateTargetInput({ value, templates, onChange }: TemplateTarg
   const upload = useMutation({
     mutationFn: (file: File) => api.uploadTemplate(file),
     onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ['templates'] });
+      qc.invalidateQueries({ queryKey: queryKeys.templates(projectId) });
       const next = [...normalizedPaths.filter(Boolean), result.path];
       onChange(buildTemplatePaths(next.length ? next : [result.path]));
     },

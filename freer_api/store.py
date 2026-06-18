@@ -8,11 +8,21 @@ from serialization import sanitize_action_dict, sanitize_event_dict
 class EventStore:
     @staticmethod
     def list_events() -> List[Dict[str, Any]]:
-        return Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
+        raw = Tools.FileTool.ReadJSON(str(paths.EVENT_JSON))
+        return [sanitize_event_dict(item) for item in raw]
 
     @staticmethod
     def write_events(events: List[Dict[str, Any]]) -> None:
+        from freer_api.validate import validate_event
+
         cleaned = [sanitize_event_dict(item) for item in events]
+        index = {item['name']: item for item in cleaned if item.get('name')}
+        for item in cleaned:
+            result = validate_event(item, check_assets=False, index=index)
+            if not result['valid']:
+                name = item.get('name', '?')
+                msgs = '；'.join(i['message'] for i in result['issues'])
+                raise ValueError(f'事件 "{name}" 校验失败: {msgs}')
         Tools.FileTool.WriteJSON(str(paths.EVENT_JSON), cleaned, indent=2)
 
     @staticmethod

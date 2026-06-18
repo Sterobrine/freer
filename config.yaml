@@ -1,14 +1,14 @@
 adb_device: emulator-5554
 data_dir: data
 img_dir: img
+active_project: default
 capture_mode: adb_pipe
 log_level: INFO
 log_dir: logs
-
 api:
   host: 127.0.0.1
   port: 17890
-
 recognition:
   max_consecutive_miss_frames: 30
   last_known_ttl_frames: 3
+  on_task_pause: none

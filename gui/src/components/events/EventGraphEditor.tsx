@@ -35,7 +35,7 @@ type Props = {
   allEvents: FreerEvent[];
   actions: string[];
   onMacroChange: (event: FreerEvent) => void;
-  onSave: (event: FreerEvent, originalName: string) => void;
+  onSave: (event: FreerEvent, originalName: string) => void | Promise<void>;
   onDelete: (name: string) => void;
   savePending: boolean;
   isNew: boolean;
@@ -413,7 +413,7 @@ export function EventGraphEditor({
 
   const saveAllPatches = async () => {
     for (const [name, event] of patches) {
-      onSave(event, name);
+      await onSave(event, name);
     }
     setPatches(new Map());
   };

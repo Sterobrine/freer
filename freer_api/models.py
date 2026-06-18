@@ -48,5 +48,23 @@ class ExportRequest(BaseModel):
     include_actions: bool = True
 
 
+class ProjectCreateRequest(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str = ''
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    default_root_event: Optional[str] = None
+
+
+class TemplateCropRequest(BaseModel):
+    rect: List[int] = Field(min_length=4, max_length=4)
+    name: Optional[str] = None
+    image: str = 'capture'
+
+
 class ImportRequest(BaseModel):
     mode: str = Field(default='merge')

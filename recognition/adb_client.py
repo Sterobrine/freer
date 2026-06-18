@@ -2,6 +2,7 @@ import os
 import subprocess
 from typing import Optional
 
+from recognition.adb_text import escape_adb_input_text
 from recognition.types import AdbError
 
 
@@ -36,8 +37,9 @@ class AdbClient:
         return result.stdout
 
     def input_text(self, text: str) -> None:
+        payload = escape_adb_input_text(text)
         result = subprocess.run(
-            self._base_cmd() + ['shell', 'input', 'text', text],
+            self._base_cmd() + ['shell', 'input', 'text', payload],
             capture_output=True,
             timeout=10,
         )

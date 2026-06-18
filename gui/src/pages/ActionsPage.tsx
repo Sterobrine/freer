@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../api/client';
+import { useActiveProjectId } from '../hooks/useActiveProject';
 import type { FreerAction } from '../api/types';
 import {
   CLICK_BUTTON_LABELS,
@@ -18,6 +19,9 @@ import {
   type ActionStep,
   type ActionStepOp,
 } from '../lib/actionSteps';
+import { actionSchema } from '../lib/schemas';
+import { findActionReferrers } from '../lib/eventDraft';
+import { queryKeys } from '../lib/queryKeys';
 
 const emptyAction = (platform: ActionPlatform = 'windows'): FreerAction => ({
   name: '',
@@ -183,18 +187,27 @@ function StepFields({
 
 export function ActionsPage() {
   const qc = useQueryClient();
-  const { data: actions = [], isLoading } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
+  const projectId = useActiveProjectId();
+  const { data: actions = [], isLoading } = useQuery({
+    queryKey: queryKeys.actions(projectId),
+    queryFn: api.listActions,
+  });
+  const { data: events = [] } = useQuery({ queryKey: queryKeys.events(projectId), queryFn: api.listEvents });
   const [editing, setEditing] = useState<FreerAction | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [error, setError] = useState('');
 
   const save = useMutation({
     mutationFn: async (action: FreerAction) => {
-      if (isNew) return api.createAction(action);
-      return api.updateAction(action.name, action);
+      const parsed = actionSchema.safeParse(action);
+      if (!parsed.success) {
+        throw new Error(parsed.error.issues.map((i) => i.message).join('；'));
+      }
+      if (isNew) return api.createAction(parsed.data as FreerAction);
+      return api.updateAction(action.name, parsed.data as FreerAction);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['actions'] });
+      qc.invalidateQueries({ queryKey: queryKeys.actions(projectId) });
       setEditing(null);
       setIsNew(false);
       setError('');
@@ -202,9 +215,22 @@ export function ActionsPage() {
     onError: (e: Error) => setError(e.message),
   });
 
+  const requestDeleteAction = (name: string) => {
+    const referrers = findActionReferrers(events, name);
+    if (referrers.length > 0) {
+      const ok = window.confirm(
+        `动作「${name}」被以下微事件使用：${referrers.join('、')}。仍要删除吗？`,
+      );
+      if (!ok) return;
+    } else if (!window.confirm(`确定删除动作「${name}」？`)) {
+      return;
+    }
+    remove.mutate(name);
+  };
+
   const remove = useMutation({
     mutationFn: (name: string) => api.deleteAction(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['actions'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.actions(projectId) }),
     onError: (e: Error) => setError(e.message),
   });
 
@@ -238,7 +264,7 @@ export function ActionsPage() {
   const platformOps = editing ? PLATFORM_OPS[editing.platform] : PLATFORM_OPS.windows;
 
   return (
-    <div className="flex h-[calc(100vh-57px)]">
+    <div className="flex h-full">
       <div className="w-80 shrink-0 overflow-y-auto border-r border-surface-border p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold">动作</h2>
@@ -280,7 +306,7 @@ export function ActionsPage() {
                   {summarizeSteps(a.steps ?? [], a.platform ?? 'windows')}
                 </span>
               </button>
-              <button type="button" className="ml-1 text-[#9aa3b2] hover:text-red-300" onClick={() => remove.mutate(a.name)}>
+              <button type="button" className="ml-1 text-[#9aa3b2] hover:text-red-300" onClick={() => requestDeleteAction(a.name)}>
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </li>

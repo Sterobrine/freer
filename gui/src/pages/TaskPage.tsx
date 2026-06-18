@@ -1,21 +1,25 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pause, Play, Square } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { useActiveProjectId } from '../hooks/useActiveProject';
 import { useLogWebSocket } from '../hooks/useLogWebSocket';
+import { queryKeys } from '../lib/queryKeys';
 
 export function TaskPage() {
+  const projectId = useActiveProjectId();
   const [rootEvent, setRootEvent] = useState('');
   const [repeat, setRepeat] = useState(1);
+  const [taskError, setTaskError] = useState('');
 
-  const { data: events = [] } = useQuery({ queryKey: ['events'], queryFn: api.listEvents });
+  const { data: events = [] } = useQuery({ queryKey: queryKeys.events(projectId), queryFn: api.listEvents });
   const macroRoots = useMemo(
     () => events.filter((e) => e.event_type === 0 && !e.is_exception),
     [events],
   );
 
   const statusQ = useQuery({
-    queryKey: ['taskStatus'],
+    queryKey: queryKeys.taskStatus(projectId),
     queryFn: api.taskStatus,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -28,21 +32,46 @@ export function TaskPage() {
   const { logs, connected, clear } = useLogWebSocket(isActive || true);
 
   useEffect(() => {
-    if (!rootEvent && macroRoots[0]) setRootEvent(macroRoots[0].name);
-  }, [macroRoots, rootEvent]);
+    if (!macroRoots.some((e) => e.name === rootEvent)) {
+      setRootEvent(macroRoots[0]?.name ?? '');
+    }
+  }, [macroRoots, rootEvent, projectId]);
 
   const start = useMutation({
-    mutationFn: () => api.startTask(rootEvent, repeat),
+    mutationFn: async () => {
+      setTaskError('');
+      const root = events.find((e) => e.name === rootEvent);
+      if (!root) throw new Error('根宏事件不存在');
+      const validation = await api.validateEvents([root]);
+      const item = validation.events.find((v) => v.name === rootEvent);
+      if (item && !item.valid) {
+        throw new Error(item.issues.map((i) => i.message).join('；'));
+      }
+      return api.startTask(rootEvent, repeat);
+    },
     onSuccess: () => statusQ.refetch(),
+    onError: (e: Error) => setTaskError(e.message),
   });
-  const stop = useMutation({ mutationFn: api.stopTask, onSuccess: () => statusQ.refetch() });
-  const pause = useMutation({ mutationFn: api.pauseTask, onSuccess: () => statusQ.refetch() });
-  const resume = useMutation({ mutationFn: api.resumeTask, onSuccess: () => statusQ.refetch() });
+  const stop = useMutation({
+    mutationFn: api.stopTask,
+    onSuccess: () => statusQ.refetch(),
+    onError: (e: Error) => setTaskError(e.message),
+  });
+  const pause = useMutation({
+    mutationFn: api.pauseTask,
+    onSuccess: () => statusQ.refetch(),
+    onError: (e: Error) => setTaskError(e.message),
+  });
+  const resume = useMutation({
+    mutationFn: api.resumeTask,
+    onSuccess: () => statusQ.refetch(),
+    onError: (e: Error) => setTaskError(e.message),
+  });
 
   const st = status?.status ?? 'idle';
 
   return (
-    <div className="grid h-[calc(100vh-57px)] grid-cols-2 gap-0">
+    <div className="grid h-full grid-cols-2 gap-0">
       <div className="space-y-4 border-r border-surface-border p-6">
         <h2 className="text-lg font-semibold">任务控制台</h2>
 
@@ -108,6 +137,7 @@ export function TaskPage() {
             <span className="truncate pl-4 text-right text-xs">{status?.route ?? '—'}</span>
           </div>
           {status?.error && <p className="text-red-300">{status.error}</p>}
+          {taskError && <p className="text-red-300">{taskError}</p>}
         </div>
       </div>
 

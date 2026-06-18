@@ -8,6 +8,7 @@ MICRO_EVENT_FIELDS: Set[str] = {
     'match_type_start', 'match_type_finish', 'roi_start', 'roi_finish',
     'match_fallback_start', 'match_fallback_finish', 'last_resort_start',
     'last_resort_finish', 'index_start', 'index_finish',
+    'accuracy_start', 'accuracy_finish',
 }
 
 GRAND_EVENT_FIELDS: Set[str] = MICRO_EVENT_FIELDS | {

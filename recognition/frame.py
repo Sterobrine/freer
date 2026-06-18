@@ -30,6 +30,20 @@ class FrameContext:
 
         global _frame_counter
         _frame_counter += 1
+
+        capture_mode = 'adb_pipe'
+        try:
+            from config import get_config
+            capture_mode = get_config().capture_mode
+        except Exception:
+            pass
+        if capture_mode not in ('adb_pipe', ''):
+            from freer_log import get_logger
+            get_logger('freer.capture').warning(
+                'capture_mode=%s 未实现，回退 adb_pipe（识别截屏仅支持 ADB）',
+                capture_mode,
+            )
+
         client = adb_client or AdbClient()
         try:
             raw = client.screencap()

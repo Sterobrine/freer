@@ -23,8 +23,14 @@ def refresh_paths() -> None:
     try:
         from config import get_config
         cfg = get_config()
-        DATA_DIR = (PROJECT_ROOT / cfg.data_dir).resolve()
-        IMG_DIR = (PROJECT_ROOT / cfg.img_dir).resolve()
+        active = getattr(cfg, 'active_project', None) or 'default'
+        project_dir = (PROJECT_ROOT / 'projects' / active).resolve()
+        if project_dir.exists() and (project_dir / 'event.json').exists():
+            DATA_DIR = project_dir
+            IMG_DIR = (project_dir / 'img').resolve()
+        else:
+            DATA_DIR = (PROJECT_ROOT / cfg.data_dir).resolve()
+            IMG_DIR = (PROJECT_ROOT / cfg.img_dir).resolve()
         LOG_DIR = (PROJECT_ROOT / cfg.log_dir).resolve()
     except Exception:
         DATA_DIR = PROJECT_ROOT / 'data'

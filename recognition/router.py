@@ -12,6 +12,7 @@ from recognition.matchers.template import TemplateMatcher
 from recognition.matchers.ui import UiMatcher
 from recognition.position_utils import default_position_to_rects
 from recognition.types import (
+    LAST_KNOWN_TTL_FRAMES,
     MAX_MATCH_MS_PER_FRAME,
     MAX_MATCH_MS_PER_SYMBOL,
     OCR_INTERVAL_FRAMES,
@@ -22,7 +23,7 @@ from recognition.types import (
 
 
 class MatcherRouter:
-    def __init__(self):
+    def __init__(self, ttl_frames: int = LAST_KNOWN_TTL_FRAMES):
         self._matchers = {
             'template': TemplateMatcher(),
             'feature': FeatureMatcher(),
@@ -30,7 +31,7 @@ class MatcherRouter:
             'ui': UiMatcher(),
             'color': ColorMatcher(),
         }
-        self.last_known = LastKnownCache()
+        self.last_known = LastKnownCache(ttl_frames=ttl_frames)
         self._ocr_last_frame: Dict[str, int] = {}
         self._ocr_throttle_results: Dict[str, List[Rect]] = {}
 

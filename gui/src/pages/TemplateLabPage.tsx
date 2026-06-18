@@ -2,13 +2,19 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Camera, Scan } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { useActiveProjectId } from '../hooks/useActiveProject';
 import { MATCH_TYPE_LABELS, SYMBOL_FIELD_LABELS } from '../lib/fieldLabels';
+import { queryKeys } from '../lib/queryKeys';
 import { formatRoi, parseRoi } from '../lib/schemas';
 
 type Rect = { x1: number; y1: number; x2: number; y2: number };
 
 export function TemplateLabPage() {
-  const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: api.listTemplates });
+  const projectId = useActiveProjectId();
+  const { data: templates = [] } = useQuery({
+    queryKey: queryKeys.templates(projectId),
+    queryFn: api.listTemplates,
+  });
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [symbol, setSymbol] = useState('');
   const [matchType, setMatchType] = useState('template');
@@ -78,7 +84,7 @@ export function TemplateLabPage() {
   const displayW = imgRef.current?.clientWidth ?? 1;
 
   return (
-    <div className="flex h-[calc(100vh-57px)]">
+    <div className="flex h-full">
       <aside className="w-72 shrink-0 space-y-4 overflow-y-auto border-r border-surface-border p-4">
         <h2 className="font-semibold">模板 / ROI</h2>
         {message && <p className="text-xs text-[#9aa3b2]">{message}</p>}

@@ -25,6 +25,8 @@ export type FreerEvent = {
   symbol_start?: string | Record<string, unknown> | null;
   symbol_finish?: string | Record<string, unknown> | null;
   accuracy?: number;
+  accuracy_start?: number;
+  accuracy_finish?: number;
   max_suc_run_time?: number;
   is_exception?: boolean;
   default_position?: number[][] | null;
@@ -53,12 +55,33 @@ export type FreerAction = {
   run_time: number;
   gap?: [number, number];
   steps: ActionStep[];
-
-  // legacy fields (kept for migration compatibility)
   action_type?: number;
   wait_time?: number | null;
   duration?: number | null;
   text?: string;
+};
+
+export type ProjectStats = {
+  macros: number;
+  micros: number;
+  exceptions: number;
+  total: number;
+};
+
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  description?: string;
+  created_at?: string;
+  default_root_event?: string;
+  stats?: ProjectStats;
+};
+
+export type HealthPayload = {
+  status: string;
+  api_version: string;
+  data_dir: string;
+  active_project: string;
 };
 
 export type ConfigPayload = {

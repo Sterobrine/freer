@@ -2,12 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { api } from '../api/client';
+import { queryKeys } from '../lib/queryKeys';
 
 const MAX_ATTEMPTS = 90;
 
 export function SidecarGate({ children }: { children: ReactNode }) {
   const health = useQuery({
-    queryKey: ['health'],
+    queryKey: queryKeys.health(),
     queryFn: api.health,
     retry: MAX_ATTEMPTS,
     retryDelay: 1000,
@@ -19,7 +20,7 @@ export function SidecarGate({ children }: { children: ReactNode }) {
 
   if (waiting && !failed) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3">
+      <div className="flex h-screen flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-accent" />
         <p className="text-sm text-[#9aa3b2]">正在连接 Freer 引擎…</p>
         <p className="text-xs text-[#6b7280]">首次启动可能需要 1–2 分钟（引擎解压中）</p>
@@ -34,7 +35,7 @@ export function SidecarGate({ children }: { children: ReactNode }) {
         ? ('error' in health.data ? health.data.error?.message : undefined) ?? '无法连接引擎，请检查 freer-engine.exe 是否正常启动'
         : '无法连接引擎，请检查 freer-engine.exe 是否正常启动';
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="flex h-screen flex-col items-center justify-center gap-3 px-6 text-center">
         <AlertCircle className="h-10 w-10 text-red-400" />
         <h1 className="text-xl font-semibold">引擎未连接</h1>
         <p className="max-w-md text-sm text-[#9aa3b2]">{message}</p>
@@ -50,5 +51,5 @@ export function SidecarGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return <div className="h-full">{children}</div>;
 }

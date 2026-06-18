@@ -3,7 +3,9 @@ import type {
   ConfigPayload,
   FreerAction,
   FreerEvent,
+  HealthPayload,
   PreviewResult,
+  ProjectSummary,
   TaskStatus,
   TreeNode,
   ValidationResult,
@@ -35,7 +37,8 @@ function unwrap<T>(result: ApiResult<T>): T {
 }
 
 export const api = {
-  health: () => request<{ status: string; api_version: string; data_dir: string }>('/health'),
+  health: () => request<HealthPayload>('/health'),
+  healthReady: () => request<HealthPayload>('/health').then(unwrap),
 
   getConfig: () => request<ConfigPayload>('/config').then(unwrap),
   putConfig: (body: Partial<ConfigPayload> & Record<string, unknown>) =>
@@ -82,9 +85,26 @@ export const api = {
     const body = (await resp.json()) as ApiResult<{ path: string }>;
     return unwrap(body);
   },
-  capture: () => request<{ frame_id: number; url: string }>('/capture', { method: 'POST' }).then(unwrap),
+  capture: () =>
+    request<{ frame_id: number; url: string; width?: number; height?: number }>('/capture', { method: 'POST' }).then(unwrap),
   screenshotUrl: () => `${apiBaseUrl()}/screenshot?t=${Date.now()}`,
   assetUrl: (filename: string) => `${apiBaseUrl()}/assets/img/${encodeURIComponent(filename)}`,
+  cropTemplate: (body: { rect: number[]; name?: string; image?: string }) =>
+    request<{ path: string; width: number; height: number }>('/templates/crop', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then(unwrap),
+
+  listProjects: () => request<ProjectSummary[]>('/projects').then(unwrap),
+  createProject: (id: string, name: string, description = '') =>
+    request<ProjectSummary>('/projects', {
+      method: 'POST',
+      body: JSON.stringify({ id, name, description }),
+    }).then(unwrap),
+  activateProject: (id: string) =>
+    request<{ active_project: string; data_dir: string }>(`/projects/${encodeURIComponent(id)}/activate`, {
+      method: 'POST',
+    }).then(unwrap),
 
   preview: (body: Record<string, unknown>) =>
     request<PreviewResult>('/recognize/preview', { method: 'POST', body: JSON.stringify(body) }).then(unwrap),

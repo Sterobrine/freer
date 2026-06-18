@@ -15,7 +15,10 @@ from freer_api.models import (
     ExportRequest,
     ImportRequest,
     PreviewRequest,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
     TaskStartRequest,
+    TemplateCropRequest,
     ValidateRequest,
 )
 from freer_api.schemas import fail, ok
@@ -43,7 +46,9 @@ def _config_payload() -> Dict[str, Any]:
         'recognition': {
             'max_consecutive_miss_frames': cfg.recognition.max_consecutive_miss_frames,
             'last_known_ttl_frames': cfg.recognition.last_known_ttl_frames,
+            'on_task_pause': cfg.recognition.on_task_pause,
         },
+        'active_project': getattr(cfg, 'active_project', 'default'),
     }
 
 
@@ -76,6 +81,8 @@ def _apply_config_update(body: ConfigUpdateRequest) -> FreerConfig:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_config(reload=True)
+    import workspace
+    workspace.migrate_legacy_data_if_needed()
     paths.refresh_paths()
     setup_logging()
     logger.info('freer_api 启动，data_dir=%s', paths.DATA_DIR)
@@ -105,7 +112,79 @@ async def unhandled_exception_handler(request, exc):
 
 @app.get('/health')
 def health():
-    return ok({'status': 'ok', 'api_version': '1.1.0', 'data_dir': str(paths.DATA_DIR)})
+    import workspace
+    return ok({
+        'status': 'ok',
+        'api_version': '1.2.0',
+        'data_dir': str(paths.DATA_DIR),
+        'active_project': workspace.active_project_id(),
+    })
+
+
+@app.get('/projects')
+def list_projects_route():
+    import workspace
+    return ok(workspace.list_projects())
+
+
+@app.post('/projects')
+def create_project_route(body: ProjectCreateRequest):
+    import workspace
+    try:
+        return ok(workspace.create_project(body.id, body.name, body.description))
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+
+
+@app.get('/projects/{project_id}')
+def get_project_route(project_id: str):
+    import workspace
+    try:
+        return ok(workspace.get_project(project_id))
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.put('/projects/{project_id}')
+def update_project_route(project_id: str, body: ProjectUpdateRequest):
+    import workspace
+    try:
+        return ok(workspace.update_project(
+            project_id,
+            name=body.name,
+            description=body.description,
+            default_root_event=body.default_root_event,
+        ))
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.delete('/projects/{project_id}')
+def delete_project_route(project_id: str):
+    import workspace
+    try:
+        workspace.delete_project(project_id)
+        return ok({'deleted': project_id})
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content=fail('conflict', str(exc), 409))
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
+
+
+@app.post('/projects/{project_id}/activate')
+def activate_project_route(project_id: str):
+    import workspace
+    if task_runner.snapshot()['status'] in ('running', 'paused', 'stopping'):
+        return JSONResponse(
+            status_code=409,
+            content=fail('task_running', '请先停止任务再切换项目', 409),
+        )
+    try:
+        result = workspace.activate_project(project_id)
+        task_runner.reset_workspace()
+        return ok(result)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content=fail('not_found', str(exc), 404))
 
 
 @app.get('/config')
@@ -220,16 +299,68 @@ async def upload_template(file: UploadFile = File(...)):
     return ok({'path': rel})
 
 
+@app.post('/templates/crop')
+def crop_template_route(body: TemplateCropRequest):
+    import cv2
+    import numpy as np
+    import time
+    from recognition.adb_client import AdbClient
+    from recognition.frame import FrameContext
+
+    if len(body.rect) != 4:
+        return JSONResponse(status_code=400, content=fail('invalid_rect', 'rect 须为 [x1,y1,x2,y2]', 400))
+    x1, y1, x2, y2 = (int(v) for v in body.rect)
+    if x1 >= x2 or y1 >= y2:
+        return JSONResponse(status_code=400, content=fail('invalid_rect', '须满足 x1<x2 且 y1<y2', 400))
+
+    try:
+        if body.image == 'capture':
+            frame = FrameContext.capture(AdbClient())
+            image = frame.image
+        else:
+            raw = body.image.split(',', 1)[-1]
+            import base64
+            buf = np.frombuffer(base64.b64decode(raw), dtype=np.uint8)
+            image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError('无法解码图像')
+    except Exception as exc:
+        return JSONResponse(status_code=503, content=fail('capture_failed', str(exc), 503))
+
+    crop = image[y1:y2, x1:x2]
+    paths.refresh_paths()
+    img_dir = paths.IMG_DIR
+    img_dir.mkdir(parents=True, exist_ok=True)
+    safe = (body.name or f'crop_{int(time.time())}').strip()
+    if not safe.lower().endswith('.bmp'):
+        safe += '.bmp'
+    safe = Path(safe).name
+    target = (img_dir / safe).resolve()
+    try:
+        target.relative_to(img_dir.resolve())
+    except ValueError:
+        return JSONResponse(status_code=400, content=fail('invalid_path', '无效文件名', 400))
+    cv2.imwrite(str(target), crop)
+    rel = str(target.relative_to(paths.PROJECT_ROOT)).replace('\\', '/')
+    logger.info('裁剪模板: %s', rel)
+    return ok({'path': rel, 'width': int(x2 - x1), 'height': int(y2 - y1)})
+
+
 @app.post('/capture')
 def capture_screen():
     from recognition.adb_client import AdbClient
     from recognition.frame import FrameContext
     try:
         frame = FrameContext.capture(AdbClient())
+        import cv2
+        cv2.imwrite(str(paths.SCREENSHOT_PATH), frame.image)
+        h, w = frame.image.shape[:2]
         return ok({
             'frame_id': frame.frame_id,
             'screenshot': str(paths.SCREENSHOT_PATH),
             'url': '/screenshot',
+            'width': w,
+            'height': h,
         })
     except Exception as exc:
         return JSONResponse(status_code=503, content=fail('capture_failed', str(exc), 503))

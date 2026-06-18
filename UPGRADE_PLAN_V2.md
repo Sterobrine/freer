@@ -2,6 +2,7 @@
 
 > **定位**：在 [UPGRADE_PLAN.md](./UPGRADE_PLAN.md)（V0.4 架构与 Phase 0–3.5 历史）基础上，基于 **2025-06 全栈审查** 制定的**执行向**路线图。  
 > **原则**：优先排期**核心功能**——引擎行为可信、任务状态诚实、编排可保存可校验；增强能力与打包 polish 后置。  
+> **运行时架构**：Vision/Input 双通道、工作模式、Win32/mac 扩展见 [UPGRADE_PLAN_V3.md](./UPGRADE_PLAN_V3.md)。  
 > **基线**：工作区 **V0.4.0**；Phase 0–3.5 已落地；识别流水线 GUI、动作契约 A+B 已完成。
 
 ---
@@ -764,5 +765,6 @@ gui/src/components/capture/
 |------|------|
 | [UPGRADE_PLAN.md](./UPGRADE_PLAN.md) | 架构设计、Phase 0–3.5 历史、Matcher/GUI 方案细节 |
 | **UPGRADE_PLAN_V2.md**（本文） | **当前执行排期**：**§1.3 完整审查归档**、问题编号、阶段 5A–6、PR 切分、验收 |
+| [UPGRADE_PLAN_V3.md](./UPGRADE_PLAN_V3.md) | **运行时双通道架构**、工作模式、Phase 7（Win32/mac Vision、设备 UX） |
 
-*维护：2025-06 审查 + 用户反馈（项目管理、采图编排台）。下一步：5A 引擎可信 → 5B 编排可信 → **5F/5G 创作体验**。*
+*维护：2025-06 审查 + 用户反馈（项目管理、采图编排台）。架构：2026-06 V3（Vision/Input）。下一步：5A 引擎可信 → 5B 编排可信 → **5F/5G 创作体验** → **7A 运行时抽象**。*

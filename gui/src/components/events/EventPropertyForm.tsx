@@ -4,6 +4,9 @@ import { api } from '../../api/client';
 
 import type { FreerEvent } from '../../api/types';
 
+import { useActiveProjectId } from '../../hooks/useActiveProject';
+import { queryKeys } from '../../lib/queryKeys';
+
 import { DefaultPositionInput, WindowNameInput } from '../form/EventFormFields';
 
 import { ActionBindingPanel } from './ActionBindingPanel';
@@ -28,9 +31,16 @@ type Props = {
 
 export function EventPropertyForm({ event, actions, onChange }: Props) {
 
-  const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: api.listTemplates });
+  const projectId = useActiveProjectId();
+  const { data: templates = [] } = useQuery({
+    queryKey: queryKeys.templates(projectId),
+    queryFn: api.listTemplates,
+  });
 
-  const { data: allActions = [] } = useQuery({ queryKey: ['actions'], queryFn: api.listActions });
+  const { data: allActions = [] } = useQuery({
+    queryKey: queryKeys.actions(projectId),
+    queryFn: api.listActions,
+  });
 
   const boundAction = allActions.find((a) => a.name === event.action);
 

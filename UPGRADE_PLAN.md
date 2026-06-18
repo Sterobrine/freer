@@ -2,6 +2,7 @@
 
 > 分阶段路线图与架构设计文档。  
 > **执行排期与 V0.4.3+ 审查项见 [UPGRADE_PLAN_V2.md](./UPGRADE_PLAN_V2.md)。**  
+> **运行时双通道架构（Vision/Input）与 Phase 7 见 [UPGRADE_PLAN_V3.md](./UPGRADE_PLAN_V3.md)。**  
 > 当前基线：工作区 **V0.4.0**（`package.json`）；Phase 0–2 已落地；Phase 3 主体已完成；**动作模块 `platform` + `steps` 基础重构已落地**（§4.7.0）；**Phase 3.5（§4.7 A+B）已完成**。
 
 ---

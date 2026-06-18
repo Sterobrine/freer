@@ -2,10 +2,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../api/client';
 import type { ConfigPayload } from '../api/types';
+import { useActiveProjectId } from '../hooks/useActiveProject';
+import { queryKeys, clearProjectWorkspaceCache } from '../lib/queryKeys';
 
 export function SettingsPage() {
   const qc = useQueryClient();
-  const { data: config, isLoading } = useQuery({ queryKey: ['config'], queryFn: api.getConfig });
+  const projectId = useActiveProjectId();
+  const { data: config, isLoading } = useQuery({
+    queryKey: queryKeys.config(projectId),
+    queryFn: api.getConfig,
+  });
   const [draft, setDraft] = useState<Partial<ConfigPayload> | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [message, setMessage] = useState('');
@@ -27,7 +33,7 @@ export function SettingsPage() {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: queryKeys.config(projectId) });
       setDraft(null);
       setMessage('配置已保存');
     },
@@ -51,7 +57,8 @@ export function SettingsPage() {
   const importMut = useMutation({
     mutationFn: (file: File) => api.importPackage(file, importMode),
     onSuccess: (res) => {
-      qc.invalidateQueries();
+      clearProjectWorkspaceCache(qc);
+      qc.invalidateQueries({ queryKey: queryKeys.config(projectId) });
       setMessage(`导入完成：${res.imported_events} 事件，${res.imported_actions} 动作`);
     },
     onError: (e: Error) => setMessage(e.message),
@@ -74,7 +81,8 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-2xl space-y-6 p-6">
       <h2 className="text-lg font-semibold">设置</h2>
       {message && <p className="rounded-lg bg-surface-raised px-3 py-2 text-sm">{message}</p>}
 
@@ -98,19 +106,28 @@ export function SettingsPage() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">日志级别</label>
-            <input
+            <select
               className="input"
               value={c.log_level}
               onChange={(e) => setDraft({ ...c, log_level: e.target.value })}
-            />
+            >
+              {['DEBUG', 'INFO', 'WARNING', 'ERROR'].map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="label">截屏模式</label>
-            <input
+            <select
               className="input"
               value={c.capture_mode}
               onChange={(e) => setDraft({ ...c, capture_mode: e.target.value })}
-            />
+            >
+              <option value="adb_pipe">adb_pipe（ADB 截屏，当前唯一可用）</option>
+            </select>
+            <p className="mt-1 text-xs text-[#6b7280]">
+              识别截屏仅走 ADB；Win32 仅负责点击。坐标假设模拟器与 ADB 画面 1:1。
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -176,12 +193,18 @@ export function SettingsPage() {
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) importMut.mutate(file);
+                if (!file) return;
+                if (importMode === 'replace') {
+                  const ok = window.confirm('替换导入将覆盖当前全部事件与动作，确定继续？');
+                  if (!ok) return;
+                }
+                importMut.mutate(file);
               }}
             />
           </label>
         </div>
       </section>
+      </div>
     </div>
   );
 }

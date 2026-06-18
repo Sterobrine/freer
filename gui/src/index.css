@@ -7,8 +7,14 @@
   font-family: Inter, system-ui, -apple-system, sans-serif;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
-  @apply m-0 min-h-screen bg-[#0f1115] text-[#e8eaed] antialiased;
+  @apply m-0 overflow-hidden bg-[#0f1115] text-[#e8eaed] antialiased;
 }
 
 @layer components {
